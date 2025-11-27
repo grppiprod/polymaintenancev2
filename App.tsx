@@ -1,0 +1,910 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+  LayoutDashboard, 
+  Users, 
+  LogOut, 
+  Plus, 
+  Search, 
+  Filter, 
+  Wrench, 
+  ClipboardList,
+  History,
+  Trash2,
+  Printer,
+  X,
+  Save,
+  MoreVertical,
+  CheckCircle,
+  Clock,
+  AlertTriangle,
+  FileImage,
+  Menu
+} from 'lucide-react';
+import { Role, LogType, LogStatus, Priority, User, MaintenanceLog, HistoryItem } from './types';
+import { MOCK_USERS, PRIORITY_COLORS, ROLE_BADGES } from './constants';
+
+// --- UTILS ---
+
+const generateId = () => Math.random().toString(36).substr(2, 9);
+
+const formatDate = (dateStr: string) => {
+  return new Date(dateStr).toLocaleString('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit'
+  });
+};
+
+const getRelativeTime = (dateStr: string) => {
+  const diff = new Date().getTime() - new Date(dateStr).getTime();
+  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+  if (days === 0) return 'Today';
+  if (days === 1) return 'Yesterday';
+  return `${days} days ago`;
+};
+
+// --- COMPONENTS ---
+
+// 1. LOGIN COMPONENT
+const Login = ({ onLogin }: { onLogin: (u: User) => void }) => {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    // Simulate database lookup
+    const storedUsersStr = localStorage.getItem('poly_users');
+    const users: User[] = storedUsersStr ? JSON.parse(storedUsersStr) : MOCK_USERS;
+    
+    // Ensure admin always exists in memory check if localstorage messed up
+    const adminExists = users.find(u => u.username === 'admin');
+    if (!adminExists) users.push(MOCK_USERS[0]);
+
+    const user = users.find(u => u.username === username && u.password === password);
+
+    if (user) {
+      onLogin(user);
+    } else {
+      setError('Invalid credentials');
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-dark-950 flex items-center justify-center p-4">
+      <div className="bg-dark-900 border border-dark-800 p-8 rounded-2xl w-full max-w-md shadow-2xl relative overflow-hidden">
+        {/* Decorative background element */}
+        <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-brand-600 to-brand-400"></div>
+        
+        <div className="flex flex-col items-center mb-8">
+          <div className="bg-brand-500/10 p-4 rounded-full mb-4">
+             <Wrench className="w-10 h-10 text-brand-500" />
+          </div>
+          <h1 className="text-3xl font-bold text-white tracking-tight">PolyMaintenance</h1>
+          <p className="text-zinc-400 mt-2 text-center">Enter your credentials to access the tracking system.</p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-6">
+          <div>
+            <label className="block text-sm font-medium text-zinc-400 mb-2">Username</label>
+            <input 
+              type="text" 
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              className="w-full bg-dark-950 border border-dark-700 rounded-lg p-3 text-white focus:ring-2 focus:ring-brand-500 focus:border-transparent outline-none transition-all placeholder-zinc-600"
+              placeholder="e.g. admin"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-zinc-400 mb-2">Password</label>
+            <input 
+              type="password" 
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full bg-dark-950 border border-dark-700 rounded-lg p-3 text-white focus:ring-2 focus:ring-brand-500 focus:border-transparent outline-none transition-all placeholder-zinc-600"
+              placeholder="••••••••"
+            />
+          </div>
+          {error && <p className="text-red-400 text-sm text-center animate-pulse">{error}</p>}
+          <button 
+            type="submit" 
+            className="w-full bg-brand-500 hover:bg-brand-600 text-white font-semibold p-3 rounded-lg transition-colors shadow-lg shadow-brand-500/20"
+          >
+            Sign In
+          </button>
+        </form>
+        <p className="text-xs text-zinc-600 mt-6 text-center">
+          Admin default: admin / 1234
+        </p>
+      </div>
+    </div>
+  );
+};
+
+// 2. MODAL COMPONENT (Generic)
+const Modal = ({ isOpen, onClose, title, children, size = 'md' }: any) => {
+  if (!isOpen) return null;
+  const sizeClasses = {
+    sm: 'max-w-md',
+    md: 'max-w-2xl',
+    lg: 'max-w-4xl',
+    full: 'max-w-6xl'
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm no-print">
+      <div className={`bg-dark-900 rounded-xl border border-dark-800 w-full ${sizeClasses[size as keyof typeof sizeClasses]} max-h-[90vh] overflow-hidden flex flex-col shadow-2xl animate-fade-in-up`}>
+        <div className="flex justify-between items-center p-6 border-b border-dark-800">
+          <h2 className="text-xl font-bold text-white">{title}</h2>
+          <button onClick={onClose} className="text-zinc-400 hover:text-white transition-colors">
+            <X size={24} />
+          </button>
+        </div>
+        <div className="p-6 overflow-y-auto custom-scrollbar flex-1">
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// 3. LOG DETAIL & PRINT VIEW
+const LogDetailModal = ({ 
+  log, 
+  currentUser, 
+  isOpen, 
+  onClose, 
+  onAddHistory, 
+  onCloseLog,
+  onDeleteLog,
+  onDeleteHistory
+}: { 
+  log: MaintenanceLog | null, 
+  currentUser: User, 
+  isOpen: boolean, 
+  onClose: () => void,
+  onAddHistory: (logId: string, content: string) => void,
+  onCloseLog: (logId: string) => void,
+  onDeleteLog: (logId: string) => void,
+  onDeleteHistory: (logId: string, historyId: string) => void
+}) => {
+  const [note, setNote] = useState('');
+  const printRef = useRef<HTMLDivElement>(null);
+
+  if (!log) return null;
+
+  const handlePrint = () => {
+    window.print();
+  };
+
+  const canDeleteLog = currentUser.role === Role.ADMIN || currentUser.id === log.createdBy;
+  const isCreatorOrAdmin = (userId: string) => currentUser.role === Role.ADMIN || currentUser.id === userId;
+
+  return (
+    <>
+      <Modal isOpen={isOpen} onClose={onClose} title="Log Details" size="lg">
+        <div className="space-y-6">
+          {/* Header Info */}
+          <div className="flex flex-col md:flex-row md:justify-between md:items-start gap-4">
+            <div>
+              <h1 className="text-2xl font-bold text-white mb-2">{log.title}</h1>
+              <div className="flex flex-wrap gap-2 mb-4">
+                <span className={`px-2 py-0.5 text-xs font-semibold rounded border ${PRIORITY_COLORS[log.priority]}`}>
+                  {log.priority}
+                </span>
+                <span className={`px-2 py-0.5 text-xs font-semibold rounded border ${log.status === LogStatus.ACTIVE ? 'bg-brand-500/10 text-brand-400 border-brand-500/20' : 'bg-zinc-700 text-zinc-300 border-zinc-600'}`}>
+                  {log.status}
+                </span>
+                <span className={`px-2 py-0.5 text-xs font-semibold rounded border ${ROLE_BADGES[log.creatorRole]}`}>
+                  {log.creatorRole}
+                </span>
+              </div>
+            </div>
+            {log.status === LogStatus.ACTIVE && (
+               <button 
+               onClick={() => onCloseLog(log.id)}
+               className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors"
+             >
+               <CheckCircle size={16} /> Mark as Closed
+             </button>
+            )}
+           
+          </div>
+
+          {/* Image Section */}
+          {log.imageUrl && (
+            <div className="rounded-xl overflow-hidden border border-dark-700 bg-black/50 aspect-video flex items-center justify-center relative group">
+              <img src={log.imageUrl} alt="Issue" className="w-full h-full object-contain" />
+              <a href={log.imageUrl} target="_blank" rel="noreferrer" className="absolute bottom-4 right-4 bg-black/80 text-white px-3 py-1 rounded text-xs opacity-0 group-hover:opacity-100 transition-opacity">View Full</a>
+            </div>
+          )}
+
+          {/* Description */}
+          <div className="bg-dark-950 p-4 rounded-lg border border-dark-800">
+            <h3 className="text-sm font-medium text-zinc-400 mb-1">Description</h3>
+            <p className="text-zinc-100 whitespace-pre-wrap">{log.description}</p>
+            <div className="mt-4 flex items-center gap-2 text-xs text-zinc-500">
+              <span className="font-medium text-zinc-400">{log.creatorName}</span>
+              <span>•</span>
+              <span>{formatDate(log.createdAt)}</span>
+            </div>
+          </div>
+
+          {/* Actions: Delete Log */}
+          {canDeleteLog && (
+            <div className="flex justify-end">
+               <button 
+                  onClick={() => {
+                    if(confirm('Are you sure you want to delete this log?')) {
+                      onDeleteLog(log.id);
+                      onClose();
+                    }
+                  }}
+                  className="text-red-400 hover:text-red-300 text-sm flex items-center gap-1 transition-colors"
+                >
+                  <Trash2 size={14} /> Delete Log
+                </button>
+            </div>
+          )}
+
+          <hr className="border-dark-800" />
+
+          {/* History / Activity */}
+          <div>
+            <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+              <History size={18} className="text-brand-500" /> Activity History
+            </h3>
+            
+            <div className="space-y-4 mb-6 relative pl-4 border-l-2 border-dark-800">
+               {log.history.sort((a,b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()).map((item) => (
+                 <div key={item.id} className="relative pl-6 pb-2">
+                   {/* Dot */}
+                   <div className="absolute -left-[25px] top-1 w-4 h-4 rounded-full bg-dark-950 border-2 border-brand-500 box-content"></div>
+                   
+                   <div className="bg-dark-800 p-3 rounded-lg border border-dark-700 hover:border-dark-600 transition-colors group">
+                      <div className="flex justify-between items-start mb-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-white text-sm">{item.creatorName}</span>
+                          <span className={`text-[10px] px-1.5 rounded border ${ROLE_BADGES[item.creatorRole]}`}>{item.creatorRole}</span>
+                        </div>
+                        <span className="text-xs text-zinc-500">{formatDate(item.createdAt)}</span>
+                      </div>
+                      <p className="text-zinc-300 text-sm">{item.content}</p>
+                      
+                      {isCreatorOrAdmin(item.createdBy) && (
+                         <button 
+                         onClick={() => onDeleteHistory(log.id, item.id)}
+                         className="mt-2 text-xs text-red-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                       >
+                         Delete
+                       </button>
+                      )}
+                   </div>
+                 </div>
+               ))}
+               {log.history.length === 0 && (
+                 <p className="text-zinc-500 text-sm italic pl-6">No history recorded yet.</p>
+               )}
+            </div>
+
+            {/* Add Note Input */}
+            {log.status === LogStatus.ACTIVE && (
+              <div className="flex gap-2 items-start bg-dark-950 p-4 rounded-lg border border-dark-800">
+                <textarea 
+                  value={note} 
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder="Add a progress update, part ordered, or note..."
+                  className="flex-1 bg-dark-900 border border-dark-700 rounded-lg p-2 text-white text-sm focus:ring-1 focus:ring-brand-500 outline-none resize-none h-20"
+                ></textarea>
+                <button 
+                  disabled={!note.trim()}
+                  onClick={() => {
+                    onAddHistory(log.id, note);
+                    setNote('');
+                  }}
+                  className="bg-brand-500 hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed text-white p-2 rounded-lg transition-colors"
+                >
+                  <Save size={20} />
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="flex justify-end pt-4 border-t border-dark-800">
+             <button 
+               onClick={handlePrint}
+               className="flex items-center gap-2 text-zinc-300 hover:text-white bg-dark-800 hover:bg-dark-700 px-4 py-2 rounded-lg transition-colors"
+             >
+               <Printer size={18} /> Print Log
+             </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Print Overlay (Hidden by default, shown via CSS @media print) */}
+      <div id="print-area" className="print-only hidden bg-white text-black p-8 font-serif">
+        <div className="flex justify-between items-center mb-8 border-b-2 border-black pb-4">
+            <h1 className="text-3xl font-bold">PolyMaintenance</h1>
+            <div className="text-right">
+                <p className="text-sm">Log Report</p>
+                <p className="text-sm font-bold">{formatDate(new Date().toISOString())}</p>
+            </div>
+        </div>
+        
+        <div className="mb-6">
+            <h2 className="text-2xl font-bold mb-2">{log.title}</h2>
+            <div className="grid grid-cols-2 gap-4 text-sm mb-4 border border-gray-300 p-4">
+                <p><strong>ID:</strong> {log.id}</p>
+                <p><strong>Status:</strong> {log.status}</p>
+                <p><strong>Type:</strong> {log.type}</p>
+                <p><strong>Priority:</strong> {log.priority}</p>
+                <p><strong>Reported By:</strong> {log.creatorName} ({log.creatorRole})</p>
+                <p><strong>Date:</strong> {formatDate(log.createdAt)}</p>
+            </div>
+            
+            <h3 className="font-bold border-b border-gray-300 mb-2 mt-6">Description</h3>
+            <p className="mb-6 whitespace-pre-wrap">{log.description}</p>
+            
+            {log.imageUrl && (
+                <div className="mb-6 page-break-inside-avoid">
+                    <h3 className="font-bold border-b border-gray-300 mb-2">Attachment</h3>
+                    <img src={log.imageUrl} className="max-w-[50%] h-auto border border-gray-300" />
+                </div>
+            )}
+
+            <h3 className="font-bold border-b border-gray-300 mb-2 mt-6">History Log</h3>
+            <table className="w-full text-sm text-left">
+                <thead>
+                    <tr className="bg-gray-100">
+                        <th className="p-2">Date</th>
+                        <th className="p-2">User</th>
+                        <th className="p-2">Note</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {log.history.map(h => (
+                        <tr key={h.id} className="border-b border-gray-200">
+                            <td className="p-2 align-top w-1/4">{formatDate(h.createdAt)}</td>
+                            <td className="p-2 align-top w-1/4">{h.creatorName} <br/><span className="text-xs text-gray-500">({h.creatorRole})</span></td>
+                            <td className="p-2 align-top">{h.content}</td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+      </div>
+    </>
+  );
+};
+
+// 4. MAIN APP COMPONENT
+const App = () => {
+  // State
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [activeTab, setActiveTab] = useState<LogType>(LogType.REPAIR);
+  const [statusFilter, setStatusFilter] = useState<LogStatus>(LogStatus.ACTIVE);
+  const [users, setUsers] = useState<User[]>([]);
+  const [logs, setLogs] = useState<MaintenanceLog[]>([]);
+  
+  // UI State
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [view, setView] = useState<'dashboard' | 'users'>('dashboard');
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [selectedLog, setSelectedLog] = useState<MaintenanceLog | null>(null);
+
+  // User Management State
+  const [isUserModalOpen, setIsUserModalOpen] = useState(false);
+  const [newUserForm, setNewUserForm] = useState({ username: '', fullName: '', role: Role.PRODUCTION });
+
+  // Create Log State
+  const [newLogForm, setNewLogForm] = useState({
+    title: '',
+    description: '',
+    priority: Priority.MEDIUM,
+    image: null as File | null
+  });
+
+  // --- INITIALIZATION ---
+  useEffect(() => {
+    // Load from LocalStorage or Seed
+    const savedUsers = localStorage.getItem('poly_users');
+    if (savedUsers) {
+      setUsers(JSON.parse(savedUsers));
+    } else {
+      setUsers(MOCK_USERS);
+      localStorage.setItem('poly_users', JSON.stringify(MOCK_USERS));
+    }
+
+    const savedLogs = localStorage.getItem('poly_logs');
+    if (savedLogs) {
+      setLogs(JSON.parse(savedLogs));
+    } else {
+        // Seed some empty data if needed, or leave empty
+        setLogs([]);
+    }
+  }, []);
+
+  // Save on change
+  useEffect(() => {
+    if (users.length > 0) localStorage.setItem('poly_users', JSON.stringify(users));
+  }, [users]);
+
+  useEffect(() => {
+    localStorage.setItem('poly_logs', JSON.stringify(logs));
+  }, [logs]);
+
+
+  // --- HANDLERS ---
+
+  const handleCreateLog = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentUser) return;
+
+    let imageUrl = '';
+    if (newLogForm.image) {
+      // Convert to base64 for localstorage demo
+      imageUrl = await new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.readAsDataURL(newLogForm.image!);
+      });
+    }
+
+    const newLog: MaintenanceLog = {
+      id: generateId(),
+      title: newLogForm.title,
+      description: newLogForm.description,
+      priority: newLogForm.priority,
+      status: LogStatus.ACTIVE,
+      type: activeTab, // Depends on which tab we are on
+      createdBy: currentUser.id,
+      creatorName: currentUser.fullName,
+      creatorRole: currentUser.role,
+      createdAt: new Date().toISOString(),
+      imageUrl: imageUrl,
+      history: []
+    };
+
+    setLogs([newLog, ...logs]);
+    setIsCreateModalOpen(false);
+    setNewLogForm({ title: '', description: '', priority: Priority.MEDIUM, image: null });
+  };
+
+  const handleAddHistory = (logId: string, content: string) => {
+    if (!currentUser) return;
+    const newHistory: HistoryItem = {
+      id: generateId(),
+      content,
+      createdBy: currentUser.id,
+      creatorName: currentUser.fullName,
+      creatorRole: currentUser.role,
+      createdAt: new Date().toISOString()
+    };
+
+    setLogs(logs.map(log => {
+      if (log.id === logId) {
+        return { ...log, history: [...log.history, newHistory] };
+      }
+      return log;
+    }));
+    
+    // Update selected log view
+    if (selectedLog && selectedLog.id === logId) {
+      setSelectedLog({ ...selectedLog, history: [...selectedLog.history, newHistory] });
+    }
+  };
+
+  const handleCloseLog = (logId: string) => {
+    if(!currentUser) return;
+    
+    const closeNote: HistoryItem = {
+      id: generateId(),
+      content: 'Log marked as CLOSED.',
+      createdBy: currentUser.id,
+      creatorName: currentUser.fullName,
+      creatorRole: currentUser.role,
+      createdAt: new Date().toISOString()
+    };
+
+    setLogs(logs.map(log => {
+      if (log.id === logId) {
+        return { ...log, status: LogStatus.CLOSED, closedAt: new Date().toISOString(), history: [...log.history, closeNote] };
+      }
+      return log;
+    }));
+    // Close modal
+    if (selectedLog) setSelectedLog(null);
+  };
+
+  const handleDeleteLog = (logId: string) => {
+     setLogs(logs.filter(l => l.id !== logId));
+     setSelectedLog(null);
+  };
+
+  const handleDeleteHistory = (logId: string, historyId: string) => {
+      const updatedLogs = logs.map(log => {
+          if(log.id === logId) {
+              return { ...log, history: log.history.filter(h => h.id !== historyId)};
+          }
+          return log;
+      });
+      setLogs(updatedLogs);
+      if(selectedLog) {
+          setSelectedLog({ ...selectedLog, history: selectedLog.history.filter(h => h.id !== historyId) });
+      }
+  };
+
+  const handleCreateUser = (e: React.FormEvent) => {
+      e.preventDefault();
+      const newUser: User = {
+          id: generateId(),
+          username: newUserForm.username,
+          password: 'password', // Default password
+          fullName: newUserForm.fullName,
+          role: newUserForm.role
+      };
+      setUsers([...users, newUser]);
+      setIsUserModalOpen(false);
+      setNewUserForm({ username: '', fullName: '', role: Role.PRODUCTION });
+  };
+
+  const handleDeleteUser = (userId: string) => {
+      if(userId === currentUser?.id) return; // Can't delete self
+      setUsers(users.filter(u => u.id !== userId));
+  };
+
+
+  // --- AUTH GUARD ---
+  if (!currentUser) {
+    return <Login onLogin={setCurrentUser} />;
+  }
+
+  // --- FILTERED DATA ---
+  const filteredLogs = logs.filter(l => l.type === activeTab && l.status === statusFilter);
+
+  return (
+    <div className="flex h-screen bg-dark-950 text-zinc-100 overflow-hidden">
+      {/* SIDEBAR */}
+      <aside className={`${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 fixed md:static inset-y-0 left-0 z-40 w-64 bg-dark-900 border-r border-dark-800 transition-transform duration-300 ease-in-out flex flex-col no-print`}>
+        <div className="p-6 border-b border-dark-800 flex items-center gap-3">
+          <div className="bg-brand-500 rounded p-1">
+             <Wrench className="text-white w-5 h-5" />
+          </div>
+          <span className="font-bold text-lg tracking-tight">PolyMaintenance</span>
+        </div>
+        
+        <nav className="flex-1 p-4 space-y-2">
+          <button 
+            onClick={() => { setView('dashboard'); setIsSidebarOpen(false); }}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${view === 'dashboard' ? 'bg-brand-500/10 text-brand-500 border border-brand-500/20' : 'text-zinc-400 hover:bg-dark-800 hover:text-white'}`}
+          >
+            <LayoutDashboard size={20} /> Dashboard
+          </button>
+          
+          {currentUser.role === Role.ADMIN && (
+            <button 
+              onClick={() => { setView('users'); setIsSidebarOpen(false); }}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${view === 'users' ? 'bg-brand-500/10 text-brand-500 border border-brand-500/20' : 'text-zinc-400 hover:bg-dark-800 hover:text-white'}`}
+            >
+              <Users size={20} /> User Management
+            </button>
+          )}
+        </nav>
+
+        <div className="p-4 border-t border-dark-800">
+          <div className="flex items-center gap-3 px-4 py-3 mb-2">
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${currentUser.role === Role.ADMIN ? 'bg-purple-600' : currentUser.role === Role.ENGINEERING ? 'bg-cyan-600' : 'bg-emerald-600'}`}>
+              {currentUser.fullName.charAt(0)}
+            </div>
+            <div className="overflow-hidden">
+              <p className="text-sm font-medium truncate">{currentUser.fullName}</p>
+              <p className="text-xs text-zinc-500 truncate capitalize">{currentUser.role.toLowerCase()}</p>
+            </div>
+          </div>
+          <button 
+            onClick={() => setCurrentUser(null)}
+            className="w-full flex items-center justify-center gap-2 text-zinc-500 hover:text-red-400 transition-colors text-sm py-2"
+          >
+            <LogOut size={16} /> Sign Out
+          </button>
+        </div>
+      </aside>
+
+      {/* OVERLAY FOR MOBILE SIDEBAR */}
+      {isSidebarOpen && (
+        <div className="fixed inset-0 z-30 bg-black/50 md:hidden no-print" onClick={() => setIsSidebarOpen(false)}></div>
+      )}
+
+      {/* MAIN CONTENT */}
+      <main className="flex-1 flex flex-col min-w-0 overflow-hidden relative no-print">
+        {/* HEADER MOBILE */}
+        <header className="md:hidden flex items-center justify-between p-4 border-b border-dark-800 bg-dark-900">
+           <div className="flex items-center gap-2">
+              <button onClick={() => setIsSidebarOpen(true)} className="text-zinc-400">
+                 <Menu size={24} />
+              </button>
+              <span className="font-bold">PolyMaintenance</span>
+           </div>
+        </header>
+
+        {view === 'dashboard' ? (
+          <div className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-8">
+            <div className="max-w-7xl mx-auto">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+                <div>
+                   <h1 className="text-3xl font-bold text-white mb-1">Maintenance Logs</h1>
+                   <p className="text-zinc-400 text-sm">Track repairs and preventive measures in real-time.</p>
+                </div>
+                <button 
+                  onClick={() => setIsCreateModalOpen(true)}
+                  className="bg-brand-500 hover:bg-brand-600 text-white px-4 py-2.5 rounded-lg flex items-center gap-2 font-medium shadow-lg shadow-brand-500/20 transition-all hover:scale-105"
+                >
+                  <Plus size={20} /> Create Log
+                </button>
+              </div>
+
+              {/* TABS */}
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6 border-b border-dark-800 pb-1">
+                <div className="flex gap-6">
+                  <button 
+                    onClick={() => setActiveTab(LogType.REPAIR)}
+                    className={`pb-3 text-sm font-medium transition-colors relative ${activeTab === LogType.REPAIR ? 'text-brand-500' : 'text-zinc-400 hover:text-zinc-200'}`}
+                  >
+                    Repairs
+                    {activeTab === LogType.REPAIR && <span className="absolute bottom-0 left-0 w-full h-0.5 bg-brand-500 rounded-t-full"></span>}
+                  </button>
+                  <button 
+                    onClick={() => setActiveTab(LogType.PREVENTIVE_MAINTENANCE)}
+                    className={`pb-3 text-sm font-medium transition-colors relative ${activeTab === LogType.PREVENTIVE_MAINTENANCE ? 'text-brand-500' : 'text-zinc-400 hover:text-zinc-200'}`}
+                  >
+                    Preventive Maintenance
+                    {activeTab === LogType.PREVENTIVE_MAINTENANCE && <span className="absolute bottom-0 left-0 w-full h-0.5 bg-brand-500 rounded-t-full"></span>}
+                  </button>
+                </div>
+
+                <div className="flex bg-dark-900 p-1 rounded-lg border border-dark-800">
+                    <button 
+                      onClick={() => setStatusFilter(LogStatus.ACTIVE)}
+                      className={`px-3 py-1 text-xs rounded-md transition-all ${statusFilter === LogStatus.ACTIVE ? 'bg-dark-800 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
+                    >
+                      Active ({logs.filter(l => l.type === activeTab && l.status === LogStatus.ACTIVE).length})
+                    </button>
+                    <button 
+                      onClick={() => setStatusFilter(LogStatus.CLOSED)}
+                      className={`px-3 py-1 text-xs rounded-md transition-all ${statusFilter === LogStatus.CLOSED ? 'bg-dark-800 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
+                    >
+                      Closed ({logs.filter(l => l.type === activeTab && l.status === LogStatus.CLOSED).length})
+                    </button>
+                </div>
+              </div>
+
+              {/* LIST */}
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                {filteredLogs.map(log => (
+                  <div 
+                    key={log.id} 
+                    onClick={() => setSelectedLog(log)}
+                    className="bg-dark-900 border border-dark-800 rounded-xl p-0 hover:border-brand-500/50 transition-all cursor-pointer group overflow-hidden flex flex-col h-full"
+                  >
+                    {log.imageUrl ? (
+                       <div className="h-40 w-full overflow-hidden relative">
+                         <img src={log.imageUrl} alt={log.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                         <div className="absolute inset-0 bg-gradient-to-t from-dark-900 to-transparent opacity-80"></div>
+                         <div className="absolute bottom-2 left-3">
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${PRIORITY_COLORS[log.priority]} uppercase`}>{log.priority}</span>
+                         </div>
+                       </div>
+                    ) : (
+                      <div className="h-2 bg-gradient-to-r from-dark-800 to-dark-700">
+                         {/* Colored top bar if no image */}
+                         <div className={`h-full w-20 ${log.priority === Priority.CRITICAL ? 'bg-red-500' : log.priority === Priority.HIGH ? 'bg-orange-500' : 'bg-blue-500'}`}></div>
+                      </div>
+                    )}
+                    
+                    <div className="p-4 flex-1 flex flex-col">
+                       <div className="flex justify-between items-start mb-2">
+                          <h3 className="font-semibold text-lg text-white line-clamp-1">{log.title}</h3>
+                          {!log.imageUrl && <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${PRIORITY_COLORS[log.priority]} uppercase`}>{log.priority}</span>}
+                       </div>
+                       <p className="text-zinc-400 text-sm line-clamp-2 mb-4 flex-1">{log.description}</p>
+                       
+                       <div className="mt-auto flex items-center justify-between pt-3 border-t border-dark-800 text-xs text-zinc-500">
+                          <div className="flex items-center gap-1">
+                             <Clock size={12} />
+                             <span>{getRelativeTime(log.createdAt)}</span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                             <span>by {log.creatorName}</span>
+                             <span className={`px-1 rounded bg-dark-800 text-[9px] uppercase`}>{log.creatorRole.slice(0,4)}</span>
+                          </div>
+                       </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {filteredLogs.length === 0 && (
+                <div className="flex flex-col items-center justify-center py-20 text-zinc-600">
+                  <div className="bg-dark-900 p-4 rounded-full mb-4">
+                    <ClipboardList size={40} className="opacity-20" />
+                  </div>
+                  <p>No logs found in this category.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          /* USERS VIEW */
+          <div className="flex-1 overflow-y-auto custom-scrollbar p-8">
+             <div className="max-w-5xl mx-auto">
+                <div className="flex justify-between items-center mb-8">
+                  <h1 className="text-2xl font-bold text-white">User Management</h1>
+                  <button onClick={() => setIsUserModalOpen(true)} className="bg-brand-500 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-brand-600">Add User</button>
+                </div>
+
+                <div className="bg-dark-900 border border-dark-800 rounded-xl overflow-hidden">
+                  <table className="w-full text-left">
+                    <thead className="bg-dark-950 text-zinc-400 text-xs uppercase">
+                      <tr>
+                        <th className="p-4 font-medium">User</th>
+                        <th className="p-4 font-medium">Role</th>
+                        <th className="p-4 font-medium text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-dark-800">
+                      {users.map(user => (
+                        <tr key={user.id} className="hover:bg-dark-800/50 transition-colors">
+                          <td className="p-4">
+                            <div className="flex items-center gap-3">
+                              <div className="w-8 h-8 rounded-full bg-dark-800 flex items-center justify-center text-xs font-bold text-zinc-400">
+                                {user.fullName.charAt(0)}
+                              </div>
+                              <div>
+                                <p className="text-white font-medium text-sm">{user.fullName}</p>
+                                <p className="text-zinc-500 text-xs">@{user.username}</p>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="p-4">
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium border ${ROLE_BADGES[user.role]}`}>
+                              {user.role}
+                            </span>
+                          </td>
+                          <td className="p-4 text-right">
+                            {user.username !== 'admin' && (
+                              <button onClick={() => handleDeleteUser(user.id)} className="text-zinc-500 hover:text-red-400 transition-colors">
+                                <Trash2 size={16} />
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+             </div>
+          </div>
+        )}
+
+      </main>
+
+      {/* CREATE LOG MODAL */}
+      <Modal 
+        isOpen={isCreateModalOpen} 
+        onClose={() => setIsCreateModalOpen(false)} 
+        title={`Create New ${activeTab === LogType.REPAIR ? 'Repair' : 'Maintenance'} Log`}
+      >
+        <form onSubmit={handleCreateLog} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-zinc-400 mb-2">Attach Picture</label>
+            <div className="flex items-center gap-4">
+               <div className="w-20 h-20 bg-dark-950 border border-dashed border-dark-700 rounded-lg flex items-center justify-center overflow-hidden">
+                  {newLogForm.image ? (
+                     <img src={URL.createObjectURL(newLogForm.image)} className="w-full h-full object-cover" />
+                  ) : <span className="text-[10px] text-zinc-600">No Image</span>}
+               </div>
+               <label className="cursor-pointer bg-dark-800 hover:bg-dark-700 border border-dark-700 text-zinc-300 px-3 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors">
+                  <FileImage size={16} /> Upload Image
+                  <input type="file" accept="image/*" className="hidden" onChange={(e) => setNewLogForm({...newLogForm, image: e.target.files ? e.target.files[0] : null})} />
+               </label>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-zinc-400 mb-1">Title</label>
+            <input 
+              required
+              type="text" 
+              className="w-full bg-dark-950 border border-dark-700 rounded-lg p-2.5 text-white text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 outline-none"
+              placeholder={activeTab === LogType.REPAIR ? "e.g., Conveyor Belt Squeaking" : "e.g., Monthly Hydraulic Check"}
+              value={newLogForm.title}
+              onChange={e => setNewLogForm({...newLogForm, title: e.target.value})}
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-zinc-400 mb-1">Description</label>
+            <textarea 
+              required
+              rows={4}
+              className="w-full bg-dark-950 border border-dark-700 rounded-lg p-2.5 text-white text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 outline-none resize-none"
+              placeholder="Provide a detailed description of the issue..."
+              value={newLogForm.description}
+              onChange={e => setNewLogForm({...newLogForm, description: e.target.value})}
+            ></textarea>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-zinc-400 mb-1">Type</label>
+              <select disabled className="w-full bg-dark-800 border border-dark-700 rounded-lg p-2.5 text-zinc-400 text-sm cursor-not-allowed">
+                 <option>{activeTab === LogType.REPAIR ? 'Repair' : 'Preventive Maintenance'}</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-zinc-400 mb-1">Priority</label>
+              <select 
+                value={newLogForm.priority}
+                onChange={e => setNewLogForm({...newLogForm, priority: e.target.value as Priority})}
+                className="w-full bg-dark-950 border border-dark-700 rounded-lg p-2.5 text-white text-sm focus:border-brand-500 outline-none"
+              >
+                 {Object.values(Priority).map(p => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div>
+             <label className="block text-sm font-medium text-zinc-400 mb-1">Reporting As</label>
+             <div className="w-full bg-dark-800 border border-dark-700 rounded-lg p-2.5 text-zinc-300 text-sm flex justify-between items-center">
+                <span>{currentUser.fullName}</span>
+                <span className={`text-[10px] px-2 py-0.5 rounded border ${ROLE_BADGES[currentUser.role]}`}>{currentUser.role}</span>
+             </div>
+          </div>
+
+          <div className="flex justify-end pt-4 gap-2">
+            <button type="button" onClick={() => setIsCreateModalOpen(false)} className="px-4 py-2 text-sm text-zinc-400 hover:text-white transition-colors">Cancel</button>
+            <button type="submit" className="bg-brand-500 hover:bg-brand-600 text-white px-6 py-2 rounded-lg text-sm font-medium transition-colors">Create Log</button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* CREATE USER MODAL */}
+      <Modal isOpen={isUserModalOpen} onClose={() => setIsUserModalOpen(false)} title="Add New User" size="sm">
+         <form onSubmit={handleCreateUser} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-zinc-400 mb-1">Full Name</label>
+              <input required type="text" className="w-full bg-dark-950 border border-dark-700 rounded-lg p-2.5 text-white text-sm" value={newUserForm.fullName} onChange={e => setNewUserForm({...newUserForm, fullName: e.target.value})} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-zinc-400 mb-1">Username</label>
+              <input required type="text" className="w-full bg-dark-950 border border-dark-700 rounded-lg p-2.5 text-white text-sm" value={newUserForm.username} onChange={e => setNewUserForm({...newUserForm, username: e.target.value})} />
+            </div>
+            <div>
+               <label className="block text-sm font-medium text-zinc-400 mb-1">Role</label>
+               <select className="w-full bg-dark-950 border border-dark-700 rounded-lg p-2.5 text-white text-sm" value={newUserForm.role} onChange={e => setNewUserForm({...newUserForm, role: e.target.value as Role})}>
+                  <option value={Role.PRODUCTION}>Production</option>
+                  <option value={Role.ENGINEERING}>Engineering</option>
+                  <option value={Role.ADMIN}>Admin</option>
+               </select>
+            </div>
+            <div className="bg-yellow-500/10 border border-yellow-500/20 p-3 rounded-lg">
+               <p className="text-yellow-500 text-xs">Default password will be set to 'password'.</p>
+            </div>
+            <button type="submit" className="w-full bg-brand-500 hover:bg-brand-600 text-white py-2 rounded-lg font-medium transition-colors">Create User</button>
+         </form>
+      </Modal>
+
+      {/* LOG DETAIL MODAL */}
+      <LogDetailModal 
+        log={selectedLog} 
+        currentUser={currentUser}
+        isOpen={!!selectedLog} 
+        onClose={() => setSelectedLog(null)}
+        onAddHistory={handleAddHistory}
+        onCloseLog={handleCloseLog}
+        onDeleteLog={handleDeleteLog}
+        onDeleteHistory={handleDeleteHistory}
+      />
+    </div>
+  );
+};
+
+export default App;
