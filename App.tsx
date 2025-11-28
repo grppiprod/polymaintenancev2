@@ -28,7 +28,8 @@ import {
   CheckSquare,
   Square,
   Info,
-  Bell
+  Bell,
+  BellRing
 } from 'lucide-react';
 import { Role, LogType, LogStatus, Priority, User, MaintenanceLog, HistoryItem } from './types';
 import { MOCK_USERS, PRIORITY_COLORS, ROLE_BADGES } from './constants';
@@ -701,6 +702,8 @@ const App = () => {
   
   // Notification Toast State
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default');
+  const channelRef = useRef<any>(null);
 
   // UI State
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -747,7 +750,61 @@ const App = () => {
     }, 5000);
   };
 
+  // --- SYSTEM NOTIFICATIONS ---
+  const checkNotificationPermission = () => {
+    if ('Notification' in window) {
+      setNotificationPermission(Notification.permission);
+    }
+  };
+
+  useEffect(() => {
+    checkNotificationPermission();
+  }, []);
+
+  const requestNotificationPermission = async () => {
+    if ('Notification' in window) {
+      const permission = await Notification.requestPermission();
+      setNotificationPermission(permission);
+      if (permission === 'granted') {
+        addToast("Notifications enabled!", 'success');
+        new Notification("Notifications Enabled", {
+           body: "You will now receive alerts for new logs.",
+           icon: "https://aistudiocdn.com/lucide-react/wrench.png" 
+        });
+      }
+    } else {
+        alert("This browser does not support system notifications.");
+    }
+  };
+
+  const showSystemNotification = (title: string, body: string) => {
+      if (Notification.permission === 'granted') {
+          try {
+              new Notification(title, {
+                  body: body,
+                  // Use a generic icon or app logo if available
+                  icon: "https://cdn-icons-png.flaticon.com/512/3523/3523063.png" // Generic wrench icon url
+              });
+          } catch (e) {
+              console.error("System notification failed", e);
+          }
+      }
+  };
+
   // --- SUPABASE FETCH & REALTIME ---
+  // Helper to fetch without showing full loader
+  const refreshLogs = async () => {
+    try {
+      const { data: logData, error: logError } = await supabase.from('logs').select('*');
+      if (logError) throw logError;
+      const mappedLogs = (logData || []).map(mapLogFromDB);
+      mappedLogs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      setLogs(mappedLogs);
+    } catch (e) {
+      console.error("Silent refresh failed", e);
+    }
+  };
+
   const fetchData = async () => {
     setLoading(true);
     setDbConnectionError(null);
@@ -789,54 +846,75 @@ const App = () => {
     fetchData();
   }, []);
 
-  // Realtime Subscription
+  // Hybrid Realtime Subscription (DB Changes + Broadcasts)
   useEffect(() => {
-    const channel = supabase
-      .channel('public:logs')
+    if (!currentUser) return;
+
+    // Use a unique channel for app-wide events
+    const channel = supabase.channel('polymaintenance_global');
+    
+    channel
       .on('postgres_changes', { event: '*', schema: 'public', table: 'logs' }, (payload) => {
+          // Standard DB Change Logic
           if (payload.eventType === 'INSERT') {
               const newLog = mapLogFromDB(payload.new);
-              
               setLogs(prev => {
-                  // Prevent duplicates if optimistic update already added it
                   if (prev.some(l => l.id === newLog.id)) return prev;
                   const newList = [newLog, ...prev];
-                  // Ensure sort order is maintained
                   return newList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
               });
-
-              if (currentUser && newLog.createdBy !== currentUser.id) {
+              if (newLog.createdBy !== currentUser.id) {
                   addToast(`New Log: ${newLog.title} by ${newLog.creatorName}`, 'info');
+                  showSystemNotification("New Maintenance Log", `${newLog.title} by ${newLog.creatorName}`);
               }
           } else if (payload.eventType === 'UPDATE') {
               const updatedLog = mapLogFromDB(payload.new);
               setLogs(prev => prev.map(l => l.id === updatedLog.id ? updatedLog : l));
               
-              // Determine if we should notify
-              if (currentUser) {
-                 const lastHistory = updatedLog.history[updatedLog.history.length - 1];
-                 // If there's a new history item not by current user
-                 if (lastHistory && lastHistory.createdBy !== currentUser.id) {
-                    addToast(`Update on "${updatedLog.title}": ${lastHistory.content}`, 'info');
-                 } else if (!lastHistory && updatedLog.status !== (payload.old as any).status) {
-                    // Fallback for status changes without history (rare in this logic but possible)
-                    addToast(`Log "${updatedLog.title}" updated.`, 'info');
-                 }
+              // Only notify if we haven't already seen a broadcast for this
+              const lastHistory = updatedLog.history[updatedLog.history.length - 1];
+              if (lastHistory && lastHistory.createdBy !== currentUser.id) {
+                  // Fallback for system notification if broadcast missed
+                 // showSystemNotification(`Update on ${updatedLog.title}`, lastHistory.content);
               }
           } else if (payload.eventType === 'DELETE') {
               setLogs(prev => prev.filter(l => l.id !== payload.old.id));
-              // Optional: notify deletion?
           }
       })
-      .subscribe();
+      .on('broadcast', { event: 'app_notification' }, ({ payload }) => {
+          // Handle explicit broadcast from other clients
+          // Payload: { message, userId, type }
+          if (payload.userId !== currentUser.id) {
+              addToast(payload.message, payload.type || 'info');
+              showSystemNotification("PolyMaintenance Update", payload.message);
+              refreshLogs(); // Silent refresh to ensure data consistency
+          }
+      })
+      .subscribe((status) => {
+         if (status === 'SUBSCRIBED') {
+            // console.log("Connected to Realtime");
+         }
+      });
+
+    channelRef.current = channel;
 
     return () => {
         supabase.removeChannel(channel);
     };
-  }, [currentUser]); // Re-subscribe when user changes so notification filtering works correctly
+  }, [currentUser]); // Re-subscribe when user changes
 
 
   // --- HANDLERS ---
+
+  const sendBroadcast = (message: string, type: 'info' | 'success' | 'error' = 'info') => {
+      if (channelRef.current) {
+          channelRef.current.send({
+              type: 'broadcast',
+              event: 'app_notification',
+              payload: { message, userId: currentUser?.id, type }
+          });
+      }
+  };
 
   const handleCreateLog = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -857,7 +935,7 @@ const App = () => {
     }
 
     const newLog: MaintenanceLog = {
-      id: generateId(), // Temporary ID, DB might generate its own, but we send UUID if configured or text
+      id: generateId(), 
       title: newLogForm.title,
       description: newLogForm.description,
       priority: newLogForm.priority,
@@ -872,18 +950,18 @@ const App = () => {
     };
 
     try {
-      // Map to DB and Insert
       const dbLog = mapLogToDB(newLog);
-      // Remove ID if Supabase handles it, but our generateId is random string, so we can send it
       const { error } = await supabase.from('logs').insert([dbLog]);
-      
       if (error) throw error;
       
-      // Optimistic Update
       setLogs([newLog, ...logs]);
       setIsCreateModalOpen(false);
       setNewLogForm({ title: '', description: '', priority: Priority.MEDIUM, image: null });
       addToast('Log created successfully', 'success');
+      
+      // Notify others
+      sendBroadcast(`New Log: ${newLog.title} by ${currentUser.fullName}`);
+
     } catch (error: any) {
       console.error("Error creating log:", error);
       alert("Failed to save log: " + (error.message || JSON.stringify(error)));
@@ -895,7 +973,6 @@ const App = () => {
   const handleAddHistory = async (logId: string, content: string) => {
     if (!currentUser) return;
     
-    // Find current log to get its history
     const currentLog = logs.find(l => l.id === logId);
     if (!currentLog) return;
 
@@ -927,6 +1004,9 @@ const App = () => {
         setSelectedLog({ ...selectedLog, history: updatedHistory });
       }
       addToast('Note added', 'success');
+      
+      // Notify others
+      sendBroadcast(`Update on "${currentLog.title}": ${content}`);
 
     } catch (error: any) {
       alert("Failed to update history: " + (error.message || JSON.stringify(error)));
@@ -970,6 +1050,9 @@ const App = () => {
       
       if (selectedLog) setSelectedLog(null); // Close modal on close action?
       addToast('Log closed', 'success');
+      
+      // Notify others
+      sendBroadcast(`Log "${currentLog.title}" marked as CLOSED by ${currentUser.fullName}`);
 
     } catch (error: any) {
       alert("Failed to close log: " + (error.message || JSON.stringify(error)));
@@ -983,6 +1066,8 @@ const App = () => {
        setLogs(logs.filter(l => l.id !== logId));
        setSelectedLog(null);
        addToast('Log deleted', 'success');
+       // Notify others (optional for delete, maybe distracting, but good for consistency)
+       sendBroadcast(`A log was deleted by ${currentUser?.fullName}`);
      } catch (error: any) {
        alert("Failed to delete log: " + (error.message || JSON.stringify(error)));
      }
@@ -1005,6 +1090,7 @@ const App = () => {
         setSelectedLogIds(new Set());
         setIsSelectionMode(false); // Exit selection mode
         addToast(`${idsToDelete.length} logs deleted`, 'success');
+        sendBroadcast(`${idsToDelete.length} logs were deleted by Admin`);
     } catch (error: any) {
         alert("Failed to delete logs: " + (error.message || JSON.stringify(error)));
     } finally {
@@ -1192,6 +1278,17 @@ const App = () => {
           >
             <Lock size={20} /> Change Password
           </button>
+
+          {/* NOTIFICATION ENABLE BUTTON */}
+          {notificationPermission !== 'granted' && (
+            <button 
+              onClick={requestNotificationPermission}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors text-zinc-400 hover:bg-dark-800 hover:text-white`}
+            >
+              <BellRing size={20} /> Enable Notifications
+            </button>
+          )}
+
         </nav>
 
         <div className="p-4 border-t border-dark-800">
