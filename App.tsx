@@ -1517,7 +1517,7 @@ const App = () => {
                     <Loader2 className="animate-spin text-brand-500" size={40} />
                  </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 md:gap-4 pb-20">
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2 md:gap-4 pb-20">
                   {filteredLogs.map(log => (
                     <div 
                       key={log.id} 
@@ -1529,7 +1529,7 @@ const App = () => {
                           }
                       }}
                       className={`
-                        bg-dark-900 border rounded-lg md:rounded-xl p-0 transition-all cursor-pointer group overflow-hidden flex flex-col h-full relative
+                        bg-dark-900 border rounded-lg md:rounded-xl p-0 transition-all cursor-pointer group overflow-hidden flex flex-row md:flex-col h-24 md:h-full relative items-stretch
                         ${isSelectionMode && selectedLogIds.has(log.id) 
                             ? 'border-brand-500 ring-1 ring-brand-500 bg-brand-500/5' 
                             : 'border-dark-800 hover:border-brand-500/50'}
@@ -1545,28 +1545,34 @@ const App = () => {
                       )}
 
                       {log.imageUrl ? (
-                        <div className="h-32 md:h-40 w-full overflow-hidden relative">
+                        <div className="w-24 md:w-full h-full md:h-40 shrink-0 overflow-hidden relative border-r md:border-r-0 md:border-b border-dark-800">
                           <img src={log.imageUrl} alt={log.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
-                          <div className="absolute inset-0 bg-gradient-to-t from-dark-900 to-transparent opacity-80"></div>
-                          <div className="absolute bottom-2 left-3">
+                          <div className="hidden md:block absolute inset-0 bg-gradient-to-t from-dark-900 to-transparent opacity-80"></div>
+                          <div className="absolute bottom-2 left-3 hidden md:block">
                               <span className={`px-2 py-0.5 rounded text-[9px] md:text-[10px] font-bold border ${PRIORITY_COLORS[log.priority]} uppercase`}>{log.priority}</span>
                           </div>
                         </div>
                       ) : (
-                        <div className="h-2 bg-gradient-to-r from-dark-800 to-dark-700">
-                          {/* Colored top bar if no image */}
-                          <div className={`h-full w-20 ${log.priority === Priority.CRITICAL ? 'bg-red-500' : log.priority === Priority.HIGH ? 'bg-orange-500' : 'bg-blue-500'}`}></div>
+                        <div className="w-2 md:w-full h-full md:h-2 bg-gradient-to-b md:bg-gradient-to-r from-dark-800 to-dark-700 shrink-0">
+                          {/* Colored bar */}
+                          <div className={`h-full w-full ${log.priority === Priority.CRITICAL ? 'bg-red-500' : log.priority === Priority.HIGH ? 'bg-orange-500' : 'bg-blue-500'}`}></div>
                         </div>
                       )}
                       
-                      <div className="p-3 md:p-4 flex-1 flex flex-col">
-                        <div className="flex justify-between items-start mb-2">
-                            <h3 className="font-semibold text-base md:text-lg text-white line-clamp-1">{log.title}</h3>
-                            {!log.imageUrl && <span className={`px-2 py-0.5 rounded text-[9px] md:text-[10px] font-bold border ${PRIORITY_COLORS[log.priority]} uppercase`}>{log.priority}</span>}
+                      <div className="p-3 md:p-4 flex-1 flex flex-col justify-between min-w-0">
+                        <div className="flex justify-between items-start mb-1 md:mb-2">
+                            <h3 className="font-semibold text-sm md:text-lg text-white line-clamp-1">{log.title}</h3>
+                            {/* Mobile Priority Badge (or if no image on desktop) */}
+                            <span className={`md:hidden px-1.5 py-0.5 rounded text-[9px] font-bold border ${PRIORITY_COLORS[log.priority]} uppercase shrink-0 ml-2`}>
+                                {log.priority === Priority.CRITICAL ? 'CRIT' : log.priority.slice(0,3)}
+                            </span>
+                            {!log.imageUrl && <span className={`hidden md:inline px-2 py-0.5 rounded text-[10px] font-bold border ${PRIORITY_COLORS[log.priority]} uppercase`}>{log.priority}</span>}
                         </div>
-                        <p className="text-zinc-400 text-xs md:text-sm line-clamp-2 mb-3 md:mb-4 flex-1">{log.description}</p>
                         
-                        <div className="mt-auto flex items-center justify-between pt-2 md:pt-3 border-t border-dark-800 text-[10px] md:text-xs text-zinc-500">
+                        <p className="text-zinc-400 text-xs md:text-sm line-clamp-2 mb-0 md:mb-4 flex-1 md:flex-none">{log.description}</p>
+                        
+                        {/* Desktop Footer */}
+                        <div className="mt-auto hidden md:flex items-center justify-between pt-2 md:pt-3 border-t border-dark-800 text-[10px] md:text-xs text-zinc-500">
                             <div className="flex items-center gap-1">
                               <Clock size={12} />
                               <span>{getRelativeTime(log.createdAt)}</span>
@@ -1575,6 +1581,14 @@ const App = () => {
                               <span>by {log.creatorName}</span>
                               <span className={`px-1 rounded bg-dark-800 text-[9px] uppercase`}>{log.creatorRole.slice(0,4)}</span>
                             </div>
+                        </div>
+
+                        {/* Mobile Footer (Simplified) */}
+                        <div className="md:hidden flex items-center gap-2 text-[10px] text-zinc-500 mt-1">
+                             <Clock size={10} />
+                             <span>{getRelativeTime(log.createdAt)}</span>
+                             <span>•</span>
+                             <span>{log.creatorName.split(' ')[0]}</span>
                         </div>
                       </div>
                     </div>
