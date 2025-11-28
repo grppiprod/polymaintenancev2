@@ -47,6 +47,48 @@ const getRelativeTime = (dateStr: string) => {
   return `${days} days ago`;
 };
 
+// Image Compression Utility
+const compressImage = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = (event) => {
+      const img = new Image();
+      img.src = event.target?.result as string;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        // Resize logic: Max 600px dimension
+        const MAX_WIDTH = 600; 
+        const MAX_HEIGHT = 600;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > MAX_WIDTH) {
+            height *= MAX_WIDTH / width;
+            width = MAX_WIDTH;
+          }
+        } else {
+          if (height > MAX_HEIGHT) {
+            width *= MAX_HEIGHT / height;
+            height = MAX_HEIGHT;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx?.drawImage(img, 0, 0, width, height);
+        
+        // Compress to JPEG at 0.6 quality (60%)
+        resolve(canvas.toDataURL('image/jpeg', 0.6));
+      };
+      img.onerror = (err) => reject(err);
+    };
+    reader.onerror = (error) => reject(error);
+  });
+};
+
 // --- DATA MAPPING UTILS ---
 
 // Convert DB snake_case to App camelCase
@@ -285,13 +327,13 @@ const Modal = ({ isOpen, onClose, title, children, size = 'md' }: any) => {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm no-print">
       <div className={`bg-dark-900 rounded-xl border border-dark-800 w-full ${sizeClasses[size as keyof typeof sizeClasses]} max-h-[90vh] overflow-hidden flex flex-col shadow-2xl animate-fade-in-up`}>
-        <div className="flex justify-between items-center p-6 border-b border-dark-800">
-          <h2 className="text-xl font-bold text-white">{title}</h2>
+        <div className="flex justify-between items-center p-4 md:p-6 border-b border-dark-800">
+          <h2 className="text-lg md:text-xl font-bold text-white line-clamp-1">{title}</h2>
           <button onClick={onClose} className="text-zinc-400 hover:text-white transition-colors">
             <X size={24} />
           </button>
         </div>
-        <div className="p-6 overflow-y-auto custom-scrollbar flex-1">
+        <div className="p-4 md:p-6 overflow-y-auto custom-scrollbar flex-1">
           {children}
         </div>
       </div>
@@ -341,12 +383,12 @@ const LogDetailModal = ({
   return (
     <>
       <Modal isOpen={isOpen} onClose={onClose} title="Log Details" size="lg">
-        <div className="space-y-6">
+        <div className="space-y-4 md:space-y-6">
           {/* Header Info */}
           <div className="flex flex-col md:flex-row md:justify-between md:items-start gap-4">
             <div>
-              <h1 className="text-2xl font-bold text-white mb-2">{log.title}</h1>
-              <div className="flex flex-wrap gap-2 mb-4">
+              <h1 className="text-xl md:text-2xl font-bold text-white mb-2">{log.title}</h1>
+              <div className="flex flex-wrap gap-2 mb-2 md:mb-4">
                 <span className={`px-2 py-0.5 text-xs font-semibold rounded border ${PRIORITY_COLORS[log.priority]}`}>
                   {log.priority}
                 </span>
@@ -361,7 +403,7 @@ const LogDetailModal = ({
             {log.status === LogStatus.ACTIVE && (
                <button 
                onClick={() => onCloseLog(log.id)}
-               className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors"
+               className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors w-full md:w-auto justify-center"
              >
                <CheckCircle size={16} /> Mark as Closed
              </button>
@@ -378,9 +420,9 @@ const LogDetailModal = ({
           )}
 
           {/* Description */}
-          <div className="bg-dark-950 p-4 rounded-lg border border-dark-800">
+          <div className="bg-dark-950 p-3 md:p-4 rounded-lg border border-dark-800">
             <h3 className="text-sm font-medium text-zinc-400 mb-1">Description</h3>
-            <p className="text-zinc-100 whitespace-pre-wrap">{log.description}</p>
+            <p className="text-zinc-100 whitespace-pre-wrap text-sm md:text-base">{log.description}</p>
             <div className="mt-4 flex items-center gap-2 text-xs text-zinc-500">
               <span className="font-medium text-zinc-400">{log.creatorName}</span>
               <span>•</span>
@@ -422,10 +464,10 @@ const LogDetailModal = ({
                    <div className="bg-dark-800 p-3 rounded-lg border border-dark-700 hover:border-dark-600 transition-colors group">
                       <div className="flex justify-between items-start mb-1">
                         <div className="flex items-center gap-2">
-                          <span className="font-medium text-white text-sm">{item.creatorName}</span>
+                          <span className="font-medium text-white text-xs md:text-sm">{item.creatorName}</span>
                           <span className={`text-[10px] px-1.5 rounded border ${ROLE_BADGES[item.creatorRole]}`}>{item.creatorRole}</span>
                         </div>
-                        <span className="text-xs text-zinc-500">{formatDate(item.createdAt)}</span>
+                        <span className="text-[10px] md:text-xs text-zinc-500">{formatDate(item.createdAt)}</span>
                       </div>
                       <p className="text-zinc-300 text-sm">{item.content}</p>
                       
@@ -535,7 +577,16 @@ const LogDetailModal = ({
 // 4. MAIN APP COMPONENT
 const App = () => {
   // State
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  // Initialize from localStorage for persistence
+  const [currentUser, setCurrentUser] = useState<User | null>(() => {
+    try {
+      const saved = localStorage.getItem('polymaintenance_user');
+      return saved ? JSON.parse(saved) : null;
+    } catch (e) {
+      return null;
+    }
+  });
+
   const [activeTab, setActiveTab] = useState<LogType>(LogType.REPAIR);
   const [statusFilter, setStatusFilter] = useState<LogStatus>(LogStatus.ACTIVE);
   const [users, setUsers] = useState<User[]>([]);
@@ -561,6 +612,17 @@ const App = () => {
     priority: Priority.MEDIUM,
     image: null as File | null
   });
+
+  // --- AUTH HANDLERS ---
+  const handleLogin = (user: User) => {
+    setCurrentUser(user);
+    localStorage.setItem('polymaintenance_user', JSON.stringify(user));
+  };
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+    localStorage.removeItem('polymaintenance_user');
+  };
 
   // --- SUPABASE FETCH ---
   const fetchData = async () => {
@@ -614,12 +676,15 @@ const App = () => {
 
     let imageUrl = '';
     if (newLogForm.image) {
-      // Convert to base64
-      imageUrl = await new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result as string);
-        reader.readAsDataURL(newLogForm.image!);
-      });
+      try {
+        // Use compression before saving
+        imageUrl = await compressImage(newLogForm.image);
+      } catch (err) {
+        console.error("Compression failed", err);
+        alert("Failed to process image.");
+        setIsActionLoading(false);
+        return;
+      }
     }
 
     const newLog: MaintenanceLog = {
@@ -821,7 +886,7 @@ const App = () => {
 
   // --- AUTH GUARD ---
   if (!currentUser) {
-    return <Login onLogin={setCurrentUser} users={users} isLoading={loading} />;
+    return <Login onLogin={handleLogin} users={users} isLoading={loading} />;
   }
 
   // --- FILTERED DATA ---
@@ -867,7 +932,7 @@ const App = () => {
             </div>
           </div>
           <button 
-            onClick={() => setCurrentUser(null)}
+            onClick={handleLogout}
             className="w-full flex items-center justify-center gap-2 text-zinc-500 hover:text-red-400 transition-colors text-sm py-2"
           >
             <LogOut size={16} /> Sign Out
@@ -893,16 +958,16 @@ const App = () => {
         </header>
 
         {view === 'dashboard' ? (
-          <div className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-8">
+          <div className="flex-1 overflow-y-auto custom-scrollbar p-2 md:p-8">
             <div className="max-w-7xl mx-auto">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4 md:mb-8">
                 <div>
-                   <h1 className="text-3xl font-bold text-white mb-1">Maintenance Logs</h1>
+                   <h1 className="text-2xl md:text-3xl font-bold text-white mb-1">Maintenance Logs</h1>
                    <p className="text-zinc-400 text-sm">Track repairs and preventive measures in real-time.</p>
                 </div>
                 <button 
                   onClick={() => setIsCreateModalOpen(true)}
-                  className="bg-brand-500 hover:bg-brand-600 text-white px-4 py-2.5 rounded-lg flex items-center gap-2 font-medium shadow-lg shadow-brand-500/20 transition-all hover:scale-105"
+                  className="bg-brand-500 hover:bg-brand-600 text-white px-4 py-2.5 rounded-lg flex items-center gap-2 font-medium shadow-lg shadow-brand-500/20 transition-all hover:scale-105 justify-center"
                 >
                   <Plus size={20} /> Create Log
                 </button>
@@ -910,33 +975,33 @@ const App = () => {
 
               {/* TABS */}
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6 border-b border-dark-800 pb-1">
-                <div className="flex gap-6">
+                <div className="flex gap-4 md:gap-6 overflow-x-auto w-full md:w-auto">
                   <button 
                     onClick={() => setActiveTab(LogType.REPAIR)}
-                    className={`pb-3 text-sm font-medium transition-colors relative ${activeTab === LogType.REPAIR ? 'text-brand-500' : 'text-zinc-400 hover:text-zinc-200'}`}
+                    className={`pb-3 text-xs md:text-sm font-medium transition-colors relative whitespace-nowrap ${activeTab === LogType.REPAIR ? 'text-brand-500' : 'text-zinc-400 hover:text-zinc-200'}`}
                   >
                     Repairs
                     {activeTab === LogType.REPAIR && <span className="absolute bottom-0 left-0 w-full h-0.5 bg-brand-500 rounded-t-full"></span>}
                   </button>
                   <button 
                     onClick={() => setActiveTab(LogType.PREVENTIVE_MAINTENANCE)}
-                    className={`pb-3 text-sm font-medium transition-colors relative ${activeTab === LogType.PREVENTIVE_MAINTENANCE ? 'text-brand-500' : 'text-zinc-400 hover:text-zinc-200'}`}
+                    className={`pb-3 text-xs md:text-sm font-medium transition-colors relative whitespace-nowrap ${activeTab === LogType.PREVENTIVE_MAINTENANCE ? 'text-brand-500' : 'text-zinc-400 hover:text-zinc-200'}`}
                   >
                     Preventive Maintenance
                     {activeTab === LogType.PREVENTIVE_MAINTENANCE && <span className="absolute bottom-0 left-0 w-full h-0.5 bg-brand-500 rounded-t-full"></span>}
                   </button>
                 </div>
 
-                <div className="flex bg-dark-900 p-1 rounded-lg border border-dark-800">
+                <div className="flex bg-dark-900 p-1 rounded-lg border border-dark-800 w-full md:w-auto">
                     <button 
                       onClick={() => setStatusFilter(LogStatus.ACTIVE)}
-                      className={`px-3 py-1 text-xs rounded-md transition-all ${statusFilter === LogStatus.ACTIVE ? 'bg-dark-800 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
+                      className={`flex-1 md:flex-none px-3 py-1 text-xs rounded-md transition-all ${statusFilter === LogStatus.ACTIVE ? 'bg-dark-800 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
                     >
                       Active ({logs.filter(l => l.type === activeTab && l.status === LogStatus.ACTIVE).length})
                     </button>
                     <button 
                       onClick={() => setStatusFilter(LogStatus.CLOSED)}
-                      className={`px-3 py-1 text-xs rounded-md transition-all ${statusFilter === LogStatus.CLOSED ? 'bg-dark-800 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
+                      className={`flex-1 md:flex-none px-3 py-1 text-xs rounded-md transition-all ${statusFilter === LogStatus.CLOSED ? 'bg-dark-800 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
                     >
                       Closed ({logs.filter(l => l.type === activeTab && l.status === LogStatus.CLOSED).length})
                     </button>
@@ -949,19 +1014,19 @@ const App = () => {
                     <Loader2 className="animate-spin text-brand-500" size={40} />
                  </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 md:gap-4">
                   {filteredLogs.map(log => (
                     <div 
                       key={log.id} 
                       onClick={() => setSelectedLog(log)}
-                      className="bg-dark-900 border border-dark-800 rounded-xl p-0 hover:border-brand-500/50 transition-all cursor-pointer group overflow-hidden flex flex-col h-full"
+                      className="bg-dark-900 border border-dark-800 rounded-lg md:rounded-xl p-0 hover:border-brand-500/50 transition-all cursor-pointer group overflow-hidden flex flex-col h-full"
                     >
                       {log.imageUrl ? (
-                        <div className="h-40 w-full overflow-hidden relative">
+                        <div className="h-32 md:h-40 w-full overflow-hidden relative">
                           <img src={log.imageUrl} alt={log.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
                           <div className="absolute inset-0 bg-gradient-to-t from-dark-900 to-transparent opacity-80"></div>
                           <div className="absolute bottom-2 left-3">
-                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${PRIORITY_COLORS[log.priority]} uppercase`}>{log.priority}</span>
+                              <span className={`px-2 py-0.5 rounded text-[9px] md:text-[10px] font-bold border ${PRIORITY_COLORS[log.priority]} uppercase`}>{log.priority}</span>
                           </div>
                         </div>
                       ) : (
@@ -971,14 +1036,14 @@ const App = () => {
                         </div>
                       )}
                       
-                      <div className="p-4 flex-1 flex flex-col">
+                      <div className="p-3 md:p-4 flex-1 flex flex-col">
                         <div className="flex justify-between items-start mb-2">
-                            <h3 className="font-semibold text-lg text-white line-clamp-1">{log.title}</h3>
-                            {!log.imageUrl && <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${PRIORITY_COLORS[log.priority]} uppercase`}>{log.priority}</span>}
+                            <h3 className="font-semibold text-base md:text-lg text-white line-clamp-1">{log.title}</h3>
+                            {!log.imageUrl && <span className={`px-2 py-0.5 rounded text-[9px] md:text-[10px] font-bold border ${PRIORITY_COLORS[log.priority]} uppercase`}>{log.priority}</span>}
                         </div>
-                        <p className="text-zinc-400 text-sm line-clamp-2 mb-4 flex-1">{log.description}</p>
+                        <p className="text-zinc-400 text-xs md:text-sm line-clamp-2 mb-3 md:mb-4 flex-1">{log.description}</p>
                         
-                        <div className="mt-auto flex items-center justify-between pt-3 border-t border-dark-800 text-xs text-zinc-500">
+                        <div className="mt-auto flex items-center justify-between pt-2 md:pt-3 border-t border-dark-800 text-[10px] md:text-xs text-zinc-500">
                             <div className="flex items-center gap-1">
                               <Clock size={12} />
                               <span>{getRelativeTime(log.createdAt)}</span>
@@ -1006,10 +1071,10 @@ const App = () => {
           </div>
         ) : (
           /* USERS VIEW */
-          <div className="flex-1 overflow-y-auto custom-scrollbar p-8">
+          <div className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-8">
              <div className="max-w-5xl mx-auto">
-                <div className="flex justify-between items-center mb-8">
-                  <h1 className="text-2xl font-bold text-white">User Management</h1>
+                <div className="flex justify-between items-center mb-6 md:mb-8">
+                  <h1 className="text-xl md:text-2xl font-bold text-white">User Management</h1>
                   <button onClick={() => setIsUserModalOpen(true)} className="bg-brand-500 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-brand-600">Add User</button>
                 </div>
 
@@ -1017,15 +1082,15 @@ const App = () => {
                   <table className="w-full text-left">
                     <thead className="bg-dark-950 text-zinc-400 text-xs uppercase">
                       <tr>
-                        <th className="p-4 font-medium">User</th>
-                        <th className="p-4 font-medium">Role</th>
-                        <th className="p-4 font-medium text-right">Actions</th>
+                        <th className="p-3 md:p-4 font-medium">User</th>
+                        <th className="p-3 md:p-4 font-medium">Role</th>
+                        <th className="p-3 md:p-4 font-medium text-right">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-dark-800">
                       {users.map(user => (
                         <tr key={user.id} className="hover:bg-dark-800/50 transition-colors">
-                          <td className="p-4">
+                          <td className="p-3 md:p-4">
                             <div className="flex items-center gap-3">
                               <div className="w-8 h-8 rounded-full bg-dark-800 flex items-center justify-center text-xs font-bold text-zinc-400">
                                 {user.fullName.charAt(0)}
@@ -1036,12 +1101,12 @@ const App = () => {
                               </div>
                             </div>
                           </td>
-                          <td className="p-4">
-                            <span className={`px-2 py-1 rounded-full text-xs font-medium border ${ROLE_BADGES[user.role]}`}>
+                          <td className="p-3 md:p-4">
+                            <span className={`px-2 py-1 rounded-full text-[10px] md:text-xs font-medium border ${ROLE_BADGES[user.role]}`}>
                               {user.role}
                             </span>
                           </td>
-                          <td className="p-4 text-right">
+                          <td className="p-3 md:p-4 text-right">
                             {user.username !== 'admin' && (
                               <button onClick={() => handleDeleteUser(user.id)} className="text-zinc-500 hover:text-red-400 transition-colors">
                                 <Trash2 size={16} />
@@ -1069,7 +1134,7 @@ const App = () => {
           <div>
             <label className="block text-sm font-medium text-zinc-400 mb-2">Attach Picture</label>
             <div className="flex items-center gap-4">
-               <div className="w-20 h-20 bg-dark-950 border border-dashed border-dark-700 rounded-lg flex items-center justify-center overflow-hidden">
+               <div className="w-20 h-20 bg-dark-950 border border-dashed border-dark-700 rounded-lg flex items-center justify-center overflow-hidden shrink-0">
                   {newLogForm.image ? (
                      <img src={URL.createObjectURL(newLogForm.image)} className="w-full h-full object-cover" />
                   ) : <span className="text-[10px] text-zinc-600">No Image</span>}
@@ -1079,7 +1144,7 @@ const App = () => {
                   <input type="file" accept="image/*" className="hidden" onChange={(e) => setNewLogForm({...newLogForm, image: e.target.files ? e.target.files[0] : null})} />
                </label>
             </div>
-            <p className="text-xs text-zinc-500 mt-1">Note: Large images may fail to save. Keep file size small.</p>
+            <p className="text-xs text-zinc-500 mt-1">Note: Images will be compressed to save space.</p>
           </div>
 
           <div>
