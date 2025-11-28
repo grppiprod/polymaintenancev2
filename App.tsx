@@ -767,10 +767,14 @@ const App = () => {
       setNotificationPermission(permission);
       if (permission === 'granted') {
         addToast("Notifications enabled!", 'success');
-        new Notification("Notifications Enabled", {
-           body: "You will now receive alerts for new logs.",
-           icon: "https://aistudiocdn.com/lucide-react/wrench.png" 
-        });
+        try {
+            new Notification("Notifications Enabled", {
+            body: "You will now receive alerts for new logs.",
+            icon: "https://aistudiocdn.com/lucide-react/wrench.png" 
+            });
+        } catch (e) {
+            console.error("Notification test failed", e);
+        }
       }
     } else {
         alert("This browser does not support system notifications.");
@@ -780,6 +784,9 @@ const App = () => {
   const showSystemNotification = (title: string, body: string) => {
       if (Notification.permission === 'granted') {
           try {
+              if (navigator.vibrate) {
+                  navigator.vibrate([200, 100, 200]);
+              }
               new Notification(title, {
                   body: body,
                   // Use a generic icon or app logo if available
@@ -804,6 +811,26 @@ const App = () => {
       console.error("Silent refresh failed", e);
     }
   };
+
+  // --- AUTO REFRESH ON FOCUS/VISIBILITY ---
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        // console.log("App visible, refreshing data...");
+        refreshLogs();
+      }
+    };
+    
+    // Refresh when window gets focus (tab switch, app switch)
+    window.addEventListener('focus', refreshLogs);
+    // Refresh when visibility changes (screen unlock, tab switch)
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('focus', refreshLogs);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
 
   const fetchData = async () => {
     setLoading(true);
@@ -874,8 +901,13 @@ const App = () => {
               // Only notify if we haven't already seen a broadcast for this
               const lastHistory = updatedLog.history[updatedLog.history.length - 1];
               if (lastHistory && lastHistory.createdBy !== currentUser.id) {
-                  // Fallback for system notification if broadcast missed
-                 // showSystemNotification(`Update on ${updatedLog.title}`, lastHistory.content);
+                  // Check if this history item is recent (created within last 10 seconds)
+                  // This acts as a robust fallback to broadcast
+                  const diff = new Date().getTime() - new Date(lastHistory.createdAt).getTime();
+                  if (diff < 10000) {
+                       // Only show notification here if you want to double down on reliability over duplication risks
+                       // showSystemNotification(`Update on ${updatedLog.title}`, lastHistory.content);
+                  }
               }
           } else if (payload.eventType === 'DELETE') {
               setLogs(prev => prev.filter(l => l.id !== payload.old.id));
