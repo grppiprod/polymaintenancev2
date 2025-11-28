@@ -29,7 +29,8 @@ import {
   Square,
   Info,
   Bell,
-  BellRing
+  BellRing,
+  Wifi
 } from 'lucide-react';
 import { Role, LogType, LogStatus, Priority, User, MaintenanceLog, HistoryItem } from './types';
 import { MOCK_USERS, PRIORITY_COLORS, ROLE_BADGES } from './constants';
@@ -146,6 +147,20 @@ const mapLogToDB = (l: MaintenanceLog) => ({
   closed_at: l.closedAt,
   history: l.history // Storing JSON directly
 });
+
+// Helper for VAPID key conversion (used if you connect a backend later)
+function urlBase64ToUint8Array(base64String: string) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding)
+    .replace(/\-/g, '+')
+    .replace(/_/g, '/');
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
 
 interface ToastMessage {
   id: string;
@@ -750,7 +765,7 @@ const App = () => {
     }, 5000);
   };
 
-  // --- SYSTEM NOTIFICATIONS ---
+  // --- SYSTEM NOTIFICATIONS & WEB PUSH ---
   const checkNotificationPermission = () => {
     if ('Notification' in window) {
       setNotificationPermission(Notification.permission);
@@ -761,37 +776,81 @@ const App = () => {
     checkNotificationPermission();
   }, []);
 
+  const subscribeToPush = async () => {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+        return;
+    }
+
+    try {
+        const registration = await navigator.serviceWorker.ready;
+        // Check if already subscribed
+        const existingSubscription = await registration.pushManager.getSubscription();
+        if (existingSubscription) {
+            console.log("Already subscribed to push:", existingSubscription);
+            // Optionally update database with current subscription to ensure it's fresh
+            return;
+        }
+
+        // NOTE: In a real production app, you need a VAPID Public Key from your backend
+        // const response = await fetch('/api/vapid-key');
+        // const vapidPublicKey = await response.text();
+        // For now, we are skipping the actual subscription call because we don't have a VAPID key.
+        // Uncommenting the below without a valid key will throw an error.
+        /*
+        const subscription = await registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array("YOUR_VAPID_PUBLIC_KEY")
+        });
+        
+        // Send subscription to database
+        await supabase.from('push_subscriptions').upsert({ 
+            user_id: currentUser?.id,
+            subscription: JSON.stringify(subscription) 
+        });
+        */
+       console.log("Push subscription logic ready (requires VAPID key)");
+
+    } catch (e) {
+        console.error("Failed to subscribe to push", e);
+    }
+  };
+
   const requestNotificationPermission = async () => {
     if ('Notification' in window) {
       const permission = await Notification.requestPermission();
       setNotificationPermission(permission);
+      
       if (permission === 'granted') {
         addToast("Notifications enabled!", 'success');
-        try {
-            new Notification("Notifications Enabled", {
-            body: "You will now receive alerts for new logs.",
-            icon: "https://aistudiocdn.com/lucide-react/wrench.png" 
-            });
-        } catch (e) {
-            console.error("Notification test failed", e);
-        }
+        showSystemNotification("Notifications Enabled", "You will now receive alerts for new logs.");
+        
+        // Attempt to subscribe to Web Push (requires backend setup to fully function)
+        subscribeToPush();
       }
     } else {
         alert("This browser does not support system notifications.");
     }
   };
 
-  const showSystemNotification = (title: string, body: string) => {
+  const showSystemNotification = async (title: string, body: string) => {
       if (Notification.permission === 'granted') {
           try {
-              if (navigator.vibrate) {
-                  navigator.vibrate([200, 100, 200]);
+              // Try to use Service Worker for notification (Better mobile support)
+              if ('serviceWorker' in navigator) {
+                  const registration = await navigator.serviceWorker.ready;
+                  registration.showNotification(title, {
+                      body: body,
+                      icon: "https://aistudiocdn.com/lucide-react/wrench.png",
+                      badge: "https://aistudiocdn.com/lucide-react/wrench.png", // Small icon for android status bar
+                      vibrate: [200, 100, 200]
+                  } as any);
+              } else {
+                  // Fallback
+                  new Notification(title, {
+                      body: body,
+                      icon: "https://aistudiocdn.com/lucide-react/wrench.png"
+                  });
               }
-              new Notification(title, {
-                  body: body,
-                  // Use a generic icon or app logo if available
-                  icon: "https://cdn-icons-png.flaticon.com/512/3523/3523063.png" // Generic wrench icon url
-              });
           } catch (e) {
               console.error("System notification failed", e);
           }
@@ -1312,13 +1371,17 @@ const App = () => {
           </button>
 
           {/* NOTIFICATION ENABLE BUTTON */}
-          {notificationPermission !== 'granted' && (
+          {notificationPermission !== 'granted' ? (
             <button 
               onClick={requestNotificationPermission}
               className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors text-zinc-400 hover:bg-dark-800 hover:text-white`}
             >
               <BellRing size={20} /> Enable Notifications
             </button>
+          ) : (
+            <div className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-emerald-500 bg-emerald-500/10 border border-emerald-500/20">
+                <Wifi size={20} /> Notifications Active
+            </div>
           )}
 
         </nav>
