@@ -19,7 +19,11 @@ import {
   AlertTriangle,
   FileImage,
   Menu,
-  Loader2
+  Loader2,
+  Database,
+  Terminal,
+  Copy,
+  RefreshCw
 } from 'lucide-react';
 import { Role, LogType, LogStatus, Priority, User, MaintenanceLog, HistoryItem } from './types';
 import { MOCK_USERS, PRIORITY_COLORS, ROLE_BADGES } from './constants';
@@ -97,6 +101,93 @@ const mapLogToDB = (l: MaintenanceLog) => ({
 
 
 // --- COMPONENTS ---
+
+// 0. DB ERROR SCREEN
+const DatabaseErrorScreen = ({ error, onRetry }: { error: any, onRetry: () => void }) => {
+  const [copied, setCopied] = useState(false);
+  const errorMessage = error?.message || JSON.stringify(error);
+  
+  // SQL to create tables
+  const sqlSetup = `-- Run this in Supabase SQL Editor
+
+create table if not exists users (
+  id text primary key,
+  username text not null,
+  password text not null,
+  full_name text not null,
+  role text not null
+);
+
+create table if not exists logs (
+  id text primary key,
+  title text not null,
+  description text not null,
+  type text not null,
+  priority text not null,
+  status text not null,
+  image_url text,
+  created_by text not null,
+  creator_name text not null,
+  creator_role text not null,
+  created_at timestamptz not null,
+  closed_at timestamptz,
+  history jsonb default '[]'::jsonb
+);`;
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(sqlSetup);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="min-h-screen bg-dark-950 flex flex-col items-center justify-center p-4">
+      <div className="max-w-2xl w-full space-y-6">
+        <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-6 text-center">
+          <div className="bg-red-500/20 w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4">
+            <AlertTriangle className="text-red-500" size={24} />
+          </div>
+          <h2 className="text-xl font-bold text-white mb-2">Database Connection Error</h2>
+          <p className="text-red-300 font-mono text-sm bg-dark-950 p-2 rounded border border-red-500/20 inline-block">
+            {errorMessage}
+          </p>
+        </div>
+
+        <div className="bg-dark-900 border border-dark-800 rounded-xl overflow-hidden">
+          <div className="p-4 border-b border-dark-800 bg-dark-950 flex justify-between items-center">
+            <div className="flex items-center gap-2 text-zinc-400">
+               <Database size={18} />
+               <span className="font-medium text-sm">Required Database Setup</span>
+            </div>
+            <button 
+              onClick={handleCopy}
+              className="flex items-center gap-2 text-xs font-medium bg-brand-500/10 text-brand-500 hover:bg-brand-500/20 px-3 py-1.5 rounded transition-colors"
+            >
+              {copied ? <CheckCircle size={14} /> : <Copy size={14} />}
+              {copied ? 'Copied SQL' : 'Copy SQL'}
+            </button>
+          </div>
+          <div className="p-4 bg-black/50 overflow-x-auto">
+             <pre className="text-xs text-zinc-300 font-mono whitespace-pre-wrap">{sqlSetup}</pre>
+          </div>
+          <div className="p-4 bg-dark-900 text-zinc-400 text-sm border-t border-dark-800">
+             <p className="flex items-start gap-2">
+               <Terminal size={16} className="mt-0.5 shrink-0" />
+               <span>Go to your <strong>Supabase Dashboard</strong> {'>'} <strong>SQL Editor</strong>, paste the code above, and click <strong>Run</strong>. Then click Retry below.</span>
+             </p>
+          </div>
+        </div>
+
+        <button 
+          onClick={onRetry}
+          className="w-full bg-white text-black hover:bg-zinc-200 font-bold py-3 rounded-xl transition-colors flex items-center justify-center gap-2"
+        >
+          <RefreshCw size={20} /> Retry Connection
+        </button>
+      </div>
+    </div>
+  );
+};
 
 // 1. LOGIN COMPONENT
 const Login = ({ onLogin, users, isLoading }: { onLogin: (u: User) => void, users: User[], isLoading: boolean }) => {
@@ -450,6 +541,7 @@ const App = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [logs, setLogs] = useState<MaintenanceLog[]>([]);
   const [loading, setLoading] = useState(true);
+  const [dbConnectionError, setDbConnectionError] = useState<any>(null);
   
   // UI State
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -473,6 +565,7 @@ const App = () => {
   // --- SUPABASE FETCH ---
   const fetchData = async () => {
     setLoading(true);
+    setDbConnectionError(null);
     try {
       // Fetch Users
       const { data: userData, error: userError } = await supabase.from('users').select('*');
@@ -500,7 +593,8 @@ const App = () => {
 
     } catch (error: any) {
       console.error("Error fetching data:", error);
-      alert("Error connecting to database: " + error.message);
+      // Ensure we catch the error object
+      setDbConnectionError(error);
     } finally {
       setLoading(false);
     }
@@ -556,7 +650,7 @@ const App = () => {
       setNewLogForm({ title: '', description: '', priority: Priority.MEDIUM, image: null });
     } catch (error: any) {
       console.error("Error creating log:", error);
-      alert("Failed to save log: " + error.message);
+      alert("Failed to save log: " + (error.message || JSON.stringify(error)));
     } finally {
       setIsActionLoading(false);
     }
@@ -598,7 +692,7 @@ const App = () => {
       }
 
     } catch (error: any) {
-      alert("Failed to update history: " + error.message);
+      alert("Failed to update history: " + (error.message || JSON.stringify(error)));
     }
   };
 
@@ -640,7 +734,7 @@ const App = () => {
       if (selectedLog) setSelectedLog(null); // Close modal on close action?
 
     } catch (error: any) {
-      alert("Failed to close log: " + error.message);
+      alert("Failed to close log: " + (error.message || JSON.stringify(error)));
     }
   };
 
@@ -651,7 +745,7 @@ const App = () => {
        setLogs(logs.filter(l => l.id !== logId));
        setSelectedLog(null);
      } catch (error: any) {
-       alert("Failed to delete log: " + error.message);
+       alert("Failed to delete log: " + (error.message || JSON.stringify(error)));
      }
   };
 
@@ -676,7 +770,7 @@ const App = () => {
             setSelectedLog({ ...selectedLog, history: updatedHistory });
         }
       } catch (error: any) {
-        alert("Failed to delete history item: " + error.message);
+        alert("Failed to delete history item: " + (error.message || JSON.stringify(error)));
       }
   };
 
@@ -700,7 +794,7 @@ const App = () => {
         setIsUserModalOpen(false);
         setNewUserForm({ username: '', fullName: '', role: Role.PRODUCTION });
       } catch (error: any) {
-        alert("Failed to create user: " + error.message);
+        alert("Failed to create user: " + (error.message || JSON.stringify(error)));
       } finally {
         setIsActionLoading(false);
       }
@@ -716,10 +810,14 @@ const App = () => {
         if (error) throw error;
         setUsers(users.filter(u => u.id !== userId));
       } catch (error: any) {
-        alert("Failed to delete user: " + error.message);
+        alert("Failed to delete user: " + (error.message || JSON.stringify(error)));
       }
   };
 
+  // --- DB CONNECTION GUARD ---
+  if (dbConnectionError) {
+     return <DatabaseErrorScreen error={dbConnectionError} onRetry={fetchData} />;
+  }
 
   // --- AUTH GUARD ---
   if (!currentUser) {
