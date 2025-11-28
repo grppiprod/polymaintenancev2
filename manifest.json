@@ -1,0 +1,20 @@
+{
+  "short_name": "PolyMaint",
+  "name": "PolyMaintenance Tracker",
+  "icons": [
+    {
+      "src": "https://aistudiocdn.com/lucide-react/wrench.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "https://aistudiocdn.com/lucide-react/wrench.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#09090b",
+  "background_color": "#09090b"
+}

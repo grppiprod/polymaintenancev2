@@ -30,7 +30,8 @@ import {
   Info,
   Bell,
   BellRing,
-  Wifi
+  Wifi,
+  Download
 } from 'lucide-react';
 import { Role, LogType, LogStatus, Priority, User, MaintenanceLog, HistoryItem } from './types';
 import { MOCK_USERS, PRIORITY_COLORS, ROLE_BADGES } from './constants';
@@ -816,7 +817,28 @@ const App = () => {
   };
 
   const requestNotificationPermission = async () => {
-    if ('Notification' in window) {
+    // Check for Secure Context (Required for SW and Notifications)
+    if (!window.isSecureContext) {
+        alert("System notifications require a secure (HTTPS) connection.");
+        return;
+     }
+ 
+     // Check specific iOS case (Add to Home Screen required)
+     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
+     // Standalone check (PWA mode)
+     const isStandalone = window.matchMedia('(display-mode: standalone)').matches || (navigator as any).standalone;
+ 
+     if (isIOS && !isStandalone) {
+        alert("To enable notifications on iOS, you must add this app to your Home Screen.\n\n1. Tap the Share button\n2. Select 'Add to Home Screen'\n3. Open the app from there");
+        return;
+     }
+ 
+     if (!('Notification' in window)) {
+         alert("This browser does not support system notifications. Please try Google Chrome on Android or Safari/Chrome on iOS (after adding to Home Screen).");
+         return;
+     }
+
+    try {
       const permission = await Notification.requestPermission();
       setNotificationPermission(permission);
       
@@ -826,9 +848,12 @@ const App = () => {
         
         // Attempt to subscribe to Web Push (requires backend setup to fully function)
         subscribeToPush();
+      } else if (permission === 'denied') {
+        alert("Notifications are blocked. Please enable them in your browser settings.");
       }
-    } else {
-        alert("This browser does not support system notifications.");
+    } catch (e) {
+      console.error("Error requesting permission", e);
+      alert("Error requesting notification permission.");
     }
   };
 
