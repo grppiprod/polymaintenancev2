@@ -23,7 +23,10 @@ import {
   Database,
   Terminal,
   Copy,
-  RefreshCw
+  RefreshCw,
+  Lock,
+  CheckSquare,
+  Square
 } from 'lucide-react';
 import { Role, LogType, LogStatus, Priority, User, MaintenanceLog, HistoryItem } from './types';
 import { MOCK_USERS, PRIORITY_COLORS, ROLE_BADGES } from './constants';
@@ -341,6 +344,81 @@ const Modal = ({ isOpen, onClose, title, children, size = 'md' }: any) => {
   );
 };
 
+// Change Password Modal
+const ChangePasswordModal = ({ isOpen, onClose, onSubmit, isLoading }: any) => {
+    const [form, setForm] = useState({ current: '', new: '', confirm: '' });
+    const [error, setError] = useState('');
+  
+    const handleSubmit = (e: React.FormEvent) => {
+      e.preventDefault();
+      setError('');
+      
+      if (form.new !== form.confirm) {
+        setError("New passwords do not match.");
+        return;
+      }
+      if (form.new.length < 4) {
+          setError("Password must be at least 4 characters.");
+          return;
+      }
+  
+      onSubmit(form.current, form.new, (err: string) => setError(err));
+    };
+  
+    // Reset form when opened
+    useEffect(() => {
+        if(isOpen) setForm({ current: '', new: '', confirm: '' });
+    }, [isOpen]);
+  
+    return (
+      <Modal isOpen={isOpen} onClose={onClose} title="Change Password" size="sm">
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-zinc-400 mb-1">Current Password</label>
+            <input 
+              required
+              type="password" 
+              className="w-full bg-dark-950 border border-dark-700 rounded-lg p-2.5 text-white text-sm" 
+              value={form.current} 
+              onChange={e => setForm({...form, current: e.target.value})} 
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-zinc-400 mb-1">New Password</label>
+            <input 
+              required
+              type="password" 
+              className="w-full bg-dark-950 border border-dark-700 rounded-lg p-2.5 text-white text-sm" 
+              value={form.new} 
+              onChange={e => setForm({...form, new: e.target.value})} 
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-zinc-400 mb-1">Confirm New Password</label>
+            <input 
+              required
+              type="password" 
+              className="w-full bg-dark-950 border border-dark-700 rounded-lg p-2.5 text-white text-sm" 
+              value={form.confirm} 
+              onChange={e => setForm({...form, confirm: e.target.value})} 
+            />
+          </div>
+          
+          {error && <p className="text-red-400 text-xs text-center bg-red-500/10 p-2 rounded border border-red-500/20">{error}</p>}
+  
+          <button 
+            type="submit" 
+            disabled={isLoading}
+            className="w-full bg-brand-500 hover:bg-brand-600 disabled:opacity-50 text-white py-2 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
+          >
+             {isLoading && <Loader2 className="animate-spin" size={16} />}
+             Update Password
+          </button>
+        </form>
+      </Modal>
+    );
+  };
+
 // 3. LOG DETAIL & PRINT VIEW
 const LogDetailModal = ({ 
   log, 
@@ -625,6 +703,13 @@ const App = () => {
   const [isUserModalOpen, setIsUserModalOpen] = useState(false);
   const [newUserForm, setNewUserForm] = useState({ username: '', fullName: '', role: Role.PRODUCTION });
 
+  // Change Password State
+  const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
+
+  // Bulk Delete State (Admin Only)
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [selectedLogIds, setSelectedLogIds] = useState<Set<string>>(new Set());
+
   // Create Log State
   const [newLogForm, setNewLogForm] = useState({
     title: '',
@@ -834,6 +919,29 @@ const App = () => {
      }
   };
 
+  const handleBulkDelete = async () => {
+    if (!currentUser || currentUser.role !== Role.ADMIN) return;
+    if (selectedLogIds.size === 0) return;
+    
+    if(!confirm(`Are you sure you want to delete ${selectedLogIds.size} logs? This action cannot be undone.`)) return;
+
+    setIsActionLoading(true);
+    try {
+        const idsToDelete = Array.from(selectedLogIds);
+        const { error } = await supabase.from('logs').delete().in('id', idsToDelete);
+        
+        if (error) throw error;
+        
+        setLogs(logs.filter(l => !selectedLogIds.has(l.id)));
+        setSelectedLogIds(new Set());
+        setIsSelectionMode(false); // Exit selection mode
+    } catch (error: any) {
+        alert("Failed to delete logs: " + (error.message || JSON.stringify(error)));
+    } finally {
+        setIsActionLoading(false);
+    }
+  };
+
   const handleDeleteHistory = async (logId: string, historyId: string) => {
       const currentLog = logs.find(l => l.id === logId);
       if (!currentLog) return;
@@ -885,6 +993,38 @@ const App = () => {
       }
   };
 
+  const handleChangePassword = async (current: string, newPass: string, onError: (msg: string) => void) => {
+      if (!currentUser) return;
+      setIsActionLoading(true);
+
+      // Verify current password
+      if (currentUser.password !== current) {
+          onError("Incorrect current password.");
+          setIsActionLoading(false);
+          return;
+      }
+
+      try {
+          const { error } = await supabase.from('users').update({ password: newPass }).eq('id', currentUser.id);
+          if (error) throw error;
+
+          // Update local state and storage
+          const updatedUser = { ...currentUser, password: newPass };
+          setCurrentUser(updatedUser);
+          localStorage.setItem('polymaintenance_user', JSON.stringify(updatedUser));
+          
+          // Update users list locally
+          setUsers(users.map(u => u.id === currentUser.id ? updatedUser : u));
+
+          setIsChangePasswordOpen(false);
+          alert("Password updated successfully.");
+      } catch (error: any) {
+          onError(error.message || "Failed to update password");
+      } finally {
+          setIsActionLoading(false);
+      }
+  };
+
   const handleDeleteUser = async (userId: string) => {
       if(userId === currentUser?.id) return; // Can't delete self
       
@@ -897,6 +1037,21 @@ const App = () => {
       } catch (error: any) {
         alert("Failed to delete user: " + (error.message || JSON.stringify(error)));
       }
+  };
+
+  const toggleSelectionMode = () => {
+      setIsSelectionMode(!isSelectionMode);
+      setSelectedLogIds(new Set()); // Clear selection when toggling
+  };
+
+  const toggleLogSelection = (logId: string) => {
+      const newSet = new Set(selectedLogIds);
+      if (newSet.has(logId)) {
+          newSet.delete(logId);
+      } else {
+          newSet.add(logId);
+      }
+      setSelectedLogIds(newSet);
   };
 
   // --- DB CONNECTION GUARD ---
@@ -939,6 +1094,13 @@ const App = () => {
               <Users size={20} /> User Management
             </button>
           )}
+
+           <button 
+            onClick={() => { setIsChangePasswordOpen(true); setIsSidebarOpen(false); }}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors text-zinc-400 hover:bg-dark-800 hover:text-white`}
+          >
+            <Lock size={20} /> Change Password
+          </button>
         </nav>
 
         <div className="p-4 border-t border-dark-800">
@@ -985,12 +1147,25 @@ const App = () => {
                    <h1 className="text-2xl md:text-3xl font-bold text-white mb-1">Maintenance Logs</h1>
                    <p className="text-zinc-400 text-sm">Track repairs and preventive measures in real-time.</p>
                 </div>
-                <button 
-                  onClick={() => setIsCreateModalOpen(true)}
-                  className="bg-brand-500 hover:bg-brand-600 text-white px-4 py-2.5 rounded-lg flex items-center gap-2 font-medium shadow-lg shadow-brand-500/20 transition-all hover:scale-105 justify-center"
-                >
-                  <Plus size={20} /> Create Log
-                </button>
+                <div className="flex gap-2">
+                    {/* ADMIN: Bulk Delete Toggle */}
+                    {currentUser.role === Role.ADMIN && (
+                        <button 
+                           onClick={toggleSelectionMode}
+                           className={`px-4 py-2.5 rounded-lg flex items-center gap-2 font-medium transition-all ${isSelectionMode ? 'bg-zinc-700 text-white' : 'bg-dark-800 text-zinc-300 hover:bg-dark-700'}`}
+                        >
+                            {isSelectionMode ? <X size={20} /> : <CheckSquare size={20} />}
+                            {isSelectionMode ? 'Cancel Selection' : 'Select Logs'}
+                        </button>
+                    )}
+
+                    <button 
+                    onClick={() => setIsCreateModalOpen(true)}
+                    className="bg-brand-500 hover:bg-brand-600 text-white px-4 py-2.5 rounded-lg flex items-center gap-2 font-medium shadow-lg shadow-brand-500/20 transition-all hover:scale-105 justify-center"
+                    >
+                    <Plus size={20} /> Create Log
+                    </button>
+                </div>
               </div>
 
               {/* TABS */}
@@ -1034,13 +1209,33 @@ const App = () => {
                     <Loader2 className="animate-spin text-brand-500" size={40} />
                  </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 md:gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 md:gap-4 pb-20">
                   {filteredLogs.map(log => (
                     <div 
                       key={log.id} 
-                      onClick={() => setSelectedLog(log)}
-                      className="bg-dark-900 border border-dark-800 rounded-lg md:rounded-xl p-0 hover:border-brand-500/50 transition-all cursor-pointer group overflow-hidden flex flex-col h-full"
+                      onClick={() => {
+                          if (isSelectionMode) {
+                              toggleLogSelection(log.id);
+                          } else {
+                              setSelectedLog(log);
+                          }
+                      }}
+                      className={`
+                        bg-dark-900 border rounded-lg md:rounded-xl p-0 transition-all cursor-pointer group overflow-hidden flex flex-col h-full relative
+                        ${isSelectionMode && selectedLogIds.has(log.id) 
+                            ? 'border-brand-500 ring-1 ring-brand-500 bg-brand-500/5' 
+                            : 'border-dark-800 hover:border-brand-500/50'}
+                      `}
                     >
+                      {/* Selection Overlay Checkbox */}
+                      {isSelectionMode && (
+                          <div className="absolute top-2 right-2 z-10">
+                              <div className={`w-6 h-6 rounded-md flex items-center justify-center transition-colors ${selectedLogIds.has(log.id) ? 'bg-brand-500 text-white' : 'bg-dark-800 border border-zinc-600 text-transparent'}`}>
+                                  <CheckSquare size={16} />
+                              </div>
+                          </div>
+                      )}
+
                       {log.imageUrl ? (
                         <div className="h-32 md:h-40 w-full overflow-hidden relative">
                           <img src={log.imageUrl} alt={log.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
@@ -1088,6 +1283,21 @@ const App = () => {
                 </div>
               )}
             </div>
+            
+            {/* Bulk Delete Floating Action Button */}
+            {isSelectionMode && selectedLogIds.size > 0 && (
+                <div className="fixed bottom-6 left-1/2 -translate-x-1/2 md:left-auto md:right-8 md:translate-x-0 z-50 animate-in fade-in slide-in-from-bottom-4">
+                    <button 
+                        onClick={handleBulkDelete}
+                        disabled={isActionLoading}
+                        className="bg-red-600 hover:bg-red-700 text-white px-6 py-3 rounded-full font-bold shadow-2xl flex items-center gap-2"
+                    >
+                        {isActionLoading ? <Loader2 className="animate-spin" /> : <Trash2 size={20} />}
+                        Delete Selected ({selectedLogIds.size})
+                    </button>
+                </div>
+            )}
+
           </div>
         ) : (
           /* USERS VIEW */
@@ -1264,6 +1474,14 @@ const App = () => {
             </button>
          </form>
       </Modal>
+
+      {/* CHANGE PASSWORD MODAL */}
+      <ChangePasswordModal 
+         isOpen={isChangePasswordOpen} 
+         onClose={() => setIsChangePasswordOpen(false)} 
+         onSubmit={handleChangePassword} 
+         isLoading={isActionLoading} 
+      />
 
       {/* LOG DETAIL MODAL */}
       <LogDetailModal 
