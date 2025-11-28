@@ -519,55 +519,75 @@ const LogDetailModal = ({
       </Modal>
 
       {/* Print Overlay (Hidden by default, shown via CSS @media print) */}
-      <div id="print-area" className="print-only hidden bg-white text-black p-8 font-serif">
-        <div className="flex justify-between items-center mb-8 border-b-2 border-black pb-4">
-            <h1 className="text-3xl font-bold">PolyMaintenance</h1>
+      <div id="print-area" className="print-only hidden bg-white text-black p-6 font-serif max-w-[210mm] mx-auto">
+        <div className="flex justify-between items-center mb-4 border-b-2 border-black pb-2">
+            <div className="flex items-center gap-2">
+               <Wrench className="w-6 h-6 text-black" />
+               <h1 className="text-xl font-bold">PolyMaintenance</h1>
+            </div>
             <div className="text-right">
-                <p className="text-sm">Log Report</p>
-                <p className="text-sm font-bold">{formatDate(new Date().toISOString())}</p>
+                <p className="text-xs text-gray-600">Log Report</p>
+                <p className="text-xs font-bold">{formatDate(new Date().toISOString())}</p>
             </div>
         </div>
         
-        <div className="mb-6">
-            <h2 className="text-2xl font-bold mb-2">{log.title}</h2>
-            <div className="grid grid-cols-2 gap-4 text-sm mb-4 border border-gray-300 p-4">
-                <p><strong>ID:</strong> {log.id}</p>
-                <p><strong>Status:</strong> {log.status}</p>
-                <p><strong>Type:</strong> {log.type}</p>
-                <p><strong>Priority:</strong> {log.priority}</p>
-                <p><strong>Reported By:</strong> {log.creatorName} ({log.creatorRole})</p>
-                <p><strong>Date:</strong> {formatDate(log.createdAt)}</p>
+        <div>
+            <div className="flex justify-between items-start mb-2">
+                <h2 className="text-lg font-bold">{log.title}</h2>
+                <span className="text-xs border border-black px-2 py-1 rounded uppercase font-bold">{log.status}</span>
+            </div>
+
+            {/* Compact Info Grid */}
+            <div className="grid grid-cols-3 gap-2 text-xs mb-4 border border-gray-300 p-2 bg-gray-50">
+                <div><strong>ID:</strong> {log.id.slice(0,8)}</div>
+                <div><strong>Type:</strong> {log.type}</div>
+                <div><strong>Priority:</strong> {log.priority}</div>
+                <div><strong>Created:</strong> {formatDate(log.createdAt)}</div>
+                <div><strong>Reporter:</strong> {log.creatorName}</div>
+                <div><strong>Role:</strong> {log.creatorRole}</div>
             </div>
             
-            <h3 className="font-bold border-b border-gray-300 mb-2 mt-6">Description</h3>
-            <p className="mb-6 whitespace-pre-wrap">{log.description}</p>
-            
-            {log.imageUrl && (
-                <div className="mb-6 page-break-inside-avoid">
-                    <h3 className="font-bold border-b border-gray-300 mb-2">Attachment</h3>
-                    <img src={log.imageUrl} className="max-w-[50%] h-auto border border-gray-300" />
+            {/* Description & Image Row */}
+            <div className="flex gap-4 mb-4">
+                <div className="flex-1">
+                    <h3 className="text-sm font-bold border-b border-gray-300 mb-1">Description</h3>
+                    <p className="text-xs whitespace-pre-wrap leading-relaxed text-justify">{log.description}</p>
                 </div>
-            )}
+                {log.imageUrl && (
+                    <div className="w-1/3 shrink-0 flex flex-col">
+                        <h3 className="text-sm font-bold border-b border-gray-300 mb-1">Attachment</h3>
+                        <div className="border border-gray-200 p-1">
+                            <img src={log.imageUrl} className="w-full h-32 object-contain bg-gray-50" />
+                        </div>
+                    </div>
+                )}
+            </div>
 
-            <h3 className="font-bold border-b border-gray-300 mb-2 mt-6">History Log</h3>
-            <table className="w-full text-sm text-left">
+            {/* Compact History */}
+            <h3 className="text-sm font-bold border-b border-gray-300 mb-2">History Log</h3>
+            <table className="w-full text-xs text-left border-collapse">
                 <thead>
-                    <tr className="bg-gray-100">
-                        <th className="p-2">Date</th>
-                        <th className="p-2">User</th>
-                        <th className="p-2">Note</th>
+                    <tr className="bg-gray-100 border-b border-gray-300">
+                        <th className="p-1 w-24">Date</th>
+                        <th className="p-1 w-32">User</th>
+                        <th className="p-1">Note</th>
                     </tr>
                 </thead>
-                <tbody>
+                <tbody className="divide-y divide-gray-200">
                     {log.history.map(h => (
-                        <tr key={h.id} className="border-b border-gray-200">
-                            <td className="p-2 align-top w-1/4">{formatDate(h.createdAt)}</td>
-                            <td className="p-2 align-top w-1/4">{h.creatorName} <br/><span className="text-xs text-gray-500">({h.creatorRole})</span></td>
-                            <td className="p-2 align-top">{h.content}</td>
+                        <tr key={h.id}>
+                            <td className="p-1 align-top text-gray-600 whitespace-nowrap">{new Date(h.createdAt).toLocaleDateString()} <br/><span className="text-[10px]">{new Date(h.createdAt).toLocaleTimeString()}</span></td>
+                            <td className="p-1 align-top font-medium">{h.creatorName} <br/><span className="text-[10px] text-gray-500 font-normal">({h.creatorRole})</span></td>
+                            <td className="p-1 align-top">{h.content}</td>
                         </tr>
                     ))}
                 </tbody>
             </table>
+            
+             <div className="mt-8 pt-4 border-t border-black flex justify-between text-[10px] text-gray-500">
+                <p>Generated by PolyMaintenance System</p>
+                <p>Page 1 of 1</p>
+             </div>
         </div>
       </div>
     </>
