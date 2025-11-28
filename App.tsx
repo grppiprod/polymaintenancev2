@@ -26,7 +26,9 @@ import {
   RefreshCw,
   Lock,
   CheckSquare,
-  Square
+  Square,
+  Info,
+  Bell
 } from 'lucide-react';
 import { Role, LogType, LogStatus, Priority, User, MaintenanceLog, HistoryItem } from './types';
 import { MOCK_USERS, PRIORITY_COLORS, ROLE_BADGES } from './constants';
@@ -144,6 +146,11 @@ const mapLogToDB = (l: MaintenanceLog) => ({
   history: l.history // Storing JSON directly
 });
 
+interface ToastMessage {
+  id: string;
+  message: string;
+  type: 'info' | 'success' | 'error';
+}
 
 // --- COMPONENTS ---
 
@@ -692,6 +699,9 @@ const App = () => {
   const [loading, setLoading] = useState(true);
   const [dbConnectionError, setDbConnectionError] = useState<any>(null);
   
+  // Notification Toast State
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
+
   // UI State
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [view, setView] = useState<'dashboard' | 'users'>('dashboard');
@@ -729,7 +739,15 @@ const App = () => {
     localStorage.removeItem('polymaintenance_user');
   };
 
-  // --- SUPABASE FETCH ---
+  const addToast = (message: string, type: 'info' | 'success' | 'error' = 'info') => {
+    const id = Math.random().toString(36).substr(2, 9);
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => {
+        setToasts(prev => prev.filter(t => t.id !== id));
+    }, 5000);
+  };
+
+  // --- SUPABASE FETCH & REALTIME ---
   const fetchData = async () => {
     setLoading(true);
     setDbConnectionError(null);
@@ -770,6 +788,52 @@ const App = () => {
   useEffect(() => {
     fetchData();
   }, []);
+
+  // Realtime Subscription
+  useEffect(() => {
+    const channel = supabase
+      .channel('public:logs')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'logs' }, (payload) => {
+          if (payload.eventType === 'INSERT') {
+              const newLog = mapLogFromDB(payload.new);
+              
+              setLogs(prev => {
+                  // Prevent duplicates if optimistic update already added it
+                  if (prev.some(l => l.id === newLog.id)) return prev;
+                  const newList = [newLog, ...prev];
+                  // Ensure sort order is maintained
+                  return newList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+              });
+
+              if (currentUser && newLog.createdBy !== currentUser.id) {
+                  addToast(`New Log: ${newLog.title} by ${newLog.creatorName}`, 'info');
+              }
+          } else if (payload.eventType === 'UPDATE') {
+              const updatedLog = mapLogFromDB(payload.new);
+              setLogs(prev => prev.map(l => l.id === updatedLog.id ? updatedLog : l));
+              
+              // Determine if we should notify
+              if (currentUser) {
+                 const lastHistory = updatedLog.history[updatedLog.history.length - 1];
+                 // If there's a new history item not by current user
+                 if (lastHistory && lastHistory.createdBy !== currentUser.id) {
+                    addToast(`Update on "${updatedLog.title}": ${lastHistory.content}`, 'info');
+                 } else if (!lastHistory && updatedLog.status !== (payload.old as any).status) {
+                    // Fallback for status changes without history (rare in this logic but possible)
+                    addToast(`Log "${updatedLog.title}" updated.`, 'info');
+                 }
+              }
+          } else if (payload.eventType === 'DELETE') {
+              setLogs(prev => prev.filter(l => l.id !== payload.old.id));
+              // Optional: notify deletion?
+          }
+      })
+      .subscribe();
+
+    return () => {
+        supabase.removeChannel(channel);
+    };
+  }, [currentUser]); // Re-subscribe when user changes so notification filtering works correctly
 
 
   // --- HANDLERS ---
@@ -815,9 +879,11 @@ const App = () => {
       
       if (error) throw error;
       
+      // Optimistic Update
       setLogs([newLog, ...logs]);
       setIsCreateModalOpen(false);
       setNewLogForm({ title: '', description: '', priority: Priority.MEDIUM, image: null });
+      addToast('Log created successfully', 'success');
     } catch (error: any) {
       console.error("Error creating log:", error);
       alert("Failed to save log: " + (error.message || JSON.stringify(error)));
@@ -860,6 +926,7 @@ const App = () => {
       if (selectedLog && selectedLog.id === logId) {
         setSelectedLog({ ...selectedLog, history: updatedHistory });
       }
+      addToast('Note added', 'success');
 
     } catch (error: any) {
       alert("Failed to update history: " + (error.message || JSON.stringify(error)));
@@ -902,6 +969,7 @@ const App = () => {
       setLogs(updatedLogs);
       
       if (selectedLog) setSelectedLog(null); // Close modal on close action?
+      addToast('Log closed', 'success');
 
     } catch (error: any) {
       alert("Failed to close log: " + (error.message || JSON.stringify(error)));
@@ -914,6 +982,7 @@ const App = () => {
        if (error) throw error;
        setLogs(logs.filter(l => l.id !== logId));
        setSelectedLog(null);
+       addToast('Log deleted', 'success');
      } catch (error: any) {
        alert("Failed to delete log: " + (error.message || JSON.stringify(error)));
      }
@@ -935,6 +1004,7 @@ const App = () => {
         setLogs(logs.filter(l => !selectedLogIds.has(l.id)));
         setSelectedLogIds(new Set());
         setIsSelectionMode(false); // Exit selection mode
+        addToast(`${idsToDelete.length} logs deleted`, 'success');
     } catch (error: any) {
         alert("Failed to delete logs: " + (error.message || JSON.stringify(error)));
     } finally {
@@ -962,6 +1032,7 @@ const App = () => {
         if(selectedLog) {
             setSelectedLog({ ...selectedLog, history: updatedHistory });
         }
+        addToast('History item removed', 'success');
       } catch (error: any) {
         alert("Failed to delete history item: " + (error.message || JSON.stringify(error)));
       }
@@ -986,6 +1057,7 @@ const App = () => {
         setUsers([...users, newUser]);
         setIsUserModalOpen(false);
         setNewUserForm({ username: '', fullName: '', role: Role.PRODUCTION });
+        addToast('User created', 'success');
       } catch (error: any) {
         alert("Failed to create user: " + (error.message || JSON.stringify(error)));
       } finally {
@@ -1017,7 +1089,7 @@ const App = () => {
           setUsers(users.map(u => u.id === currentUser.id ? updatedUser : u));
 
           setIsChangePasswordOpen(false);
-          alert("Password updated successfully.");
+          addToast('Password updated', 'success');
       } catch (error: any) {
           onError(error.message || "Failed to update password");
       } finally {
@@ -1034,6 +1106,7 @@ const App = () => {
         const { error } = await supabase.from('users').delete().eq('id', userId);
         if (error) throw error;
         setUsers(users.filter(u => u.id !== userId));
+        addToast('User deleted', 'success');
       } catch (error: any) {
         alert("Failed to delete user: " + (error.message || JSON.stringify(error)));
       }
@@ -1068,7 +1141,25 @@ const App = () => {
   const filteredLogs = logs.filter(l => l.type === activeTab && l.status === statusFilter);
 
   return (
-    <div className="flex h-screen bg-dark-950 text-zinc-100 overflow-hidden">
+    <div className="flex h-screen bg-dark-950 text-zinc-100 overflow-hidden relative">
+      
+      {/* Toast Container */}
+      <div className="fixed top-4 right-4 z-[60] flex flex-col gap-2 no-print w-full max-w-xs pointer-events-none">
+        {toasts.map(toast => (
+            <div key={toast.id} className={`pointer-events-auto p-4 rounded-lg shadow-xl border border-white/10 text-white text-sm font-medium animate-in slide-in-from-right fade-in flex items-start gap-3 backdrop-blur-md ${
+                toast.type === 'success' ? 'bg-emerald-600/90' : 
+                toast.type === 'error' ? 'bg-red-600/90' : 'bg-brand-600/90'
+            }`}>
+                <div className="mt-0.5 shrink-0">
+                    {toast.type === 'success' ? <CheckCircle size={16} /> : 
+                     toast.type === 'error' ? <AlertTriangle size={16} /> : <Info size={16} />}
+                </div>
+                <div className="flex-1 leading-snug">{toast.message}</div>
+                <button onClick={() => setToasts(prev => prev.filter(t => t.id !== toast.id))} className="opacity-70 hover:opacity-100"><X size={14}/></button>
+            </div>
+        ))}
+      </div>
+
       {/* SIDEBAR */}
       <aside className={`${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 fixed md:static inset-y-0 left-0 z-40 w-64 bg-dark-900 border-r border-dark-800 transition-transform duration-300 ease-in-out flex flex-col no-print`}>
         <div className="p-6 border-b border-dark-800 flex items-center gap-3">
