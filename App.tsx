@@ -18,10 +18,12 @@ import {
   Clock,
   AlertTriangle,
   FileImage,
-  Menu
+  Menu,
+  Loader2
 } from 'lucide-react';
 import { Role, LogType, LogStatus, Priority, User, MaintenanceLog, HistoryItem } from './types';
 import { MOCK_USERS, PRIORITY_COLORS, ROLE_BADGES } from './constants';
+import { supabase } from './supabaseClient';
 
 // --- UTILS ---
 
@@ -41,23 +43,80 @@ const getRelativeTime = (dateStr: string) => {
   return `${days} days ago`;
 };
 
+// --- DATA MAPPING UTILS ---
+
+// Convert DB snake_case to App camelCase
+const mapUserFromDB = (u: any): User => ({
+  id: u.id,
+  username: u.username,
+  password: u.password,
+  fullName: u.full_name,
+  role: u.role as Role
+});
+
+const mapLogFromDB = (l: any): MaintenanceLog => ({
+  id: l.id,
+  title: l.title,
+  description: l.description,
+  type: l.type as LogType,
+  priority: l.priority as Priority,
+  status: l.status as LogStatus,
+  imageUrl: l.image_url,
+  createdBy: l.created_by,
+  creatorName: l.creator_name,
+  creatorRole: l.creator_role as Role,
+  createdAt: l.created_at,
+  closedAt: l.closed_at,
+  history: l.history || []
+});
+
+// Convert App camelCase to DB snake_case
+const mapUserToDB = (u: User) => ({
+  id: u.id,
+  username: u.username,
+  password: u.password,
+  full_name: u.fullName,
+  role: u.role
+});
+
+const mapLogToDB = (l: MaintenanceLog) => ({
+  id: l.id,
+  title: l.title,
+  description: l.description,
+  type: l.type,
+  priority: l.priority,
+  status: l.status,
+  image_url: l.imageUrl,
+  created_by: l.createdBy,
+  creator_name: l.creatorName,
+  creator_role: l.creatorRole,
+  created_at: l.createdAt,
+  closed_at: l.closedAt,
+  history: l.history // Storing JSON directly
+});
+
+
 // --- COMPONENTS ---
 
 // 1. LOGIN COMPONENT
-const Login = ({ onLogin }: { onLogin: (u: User) => void }) => {
+const Login = ({ onLogin, users, isLoading }: { onLogin: (u: User) => void, users: User[], isLoading: boolean }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    // Simulate database lookup
-    const storedUsersStr = localStorage.getItem('poly_users');
-    const users: User[] = storedUsersStr ? JSON.parse(storedUsersStr) : MOCK_USERS;
     
-    // Ensure admin always exists in memory check if localstorage messed up
-    const adminExists = users.find(u => u.username === 'admin');
-    if (!adminExists) users.push(MOCK_USERS[0]);
+    // Fallback for empty DB: Allow admin/1234 if no users exist
+    if (users.length === 0 && username === 'admin' && password === '1234') {
+       onLogin({
+         id: 'temp_admin',
+         username: 'admin',
+         fullName: 'System Admin',
+         role: Role.ADMIN
+       });
+       return;
+    }
 
     const user = users.find(u => u.username === username && u.password === password);
 
@@ -91,6 +150,7 @@ const Login = ({ onLogin }: { onLogin: (u: User) => void }) => {
               onChange={(e) => setUsername(e.target.value)}
               className="w-full bg-dark-950 border border-dark-700 rounded-lg p-3 text-white focus:ring-2 focus:ring-brand-500 focus:border-transparent outline-none transition-all placeholder-zinc-600"
               placeholder="e.g. admin"
+              disabled={isLoading}
             />
           </div>
           <div>
@@ -101,14 +161,16 @@ const Login = ({ onLogin }: { onLogin: (u: User) => void }) => {
               onChange={(e) => setPassword(e.target.value)}
               className="w-full bg-dark-950 border border-dark-700 rounded-lg p-3 text-white focus:ring-2 focus:ring-brand-500 focus:border-transparent outline-none transition-all placeholder-zinc-600"
               placeholder="••••••••"
+              disabled={isLoading}
             />
           </div>
           {error && <p className="text-red-400 text-sm text-center animate-pulse">{error}</p>}
           <button 
             type="submit" 
-            className="w-full bg-brand-500 hover:bg-brand-600 text-white font-semibold p-3 rounded-lg transition-colors shadow-lg shadow-brand-500/20"
+            disabled={isLoading}
+            className="w-full bg-brand-500 hover:bg-brand-600 disabled:opacity-50 text-white font-semibold p-3 rounded-lg transition-colors shadow-lg shadow-brand-500/20 flex items-center justify-center gap-2"
           >
-            Sign In
+            {isLoading ? <Loader2 className="animate-spin" size={20} /> : 'Sign In'}
           </button>
         </form>
         <p className="text-xs text-zinc-600 mt-6 text-center">
@@ -167,13 +229,20 @@ const LogDetailModal = ({
   onDeleteHistory: (logId: string, historyId: string) => void
 }) => {
   const [note, setNote] = useState('');
-  const printRef = useRef<HTMLDivElement>(null);
-
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  
   if (!log) return null;
 
   const handlePrint = () => {
     window.print();
   };
+
+  const handleAddNote = async () => {
+      setIsSubmitting(true);
+      await onAddHistory(log.id, note);
+      setNote('');
+      setIsSubmitting(false);
+  }
 
   const canDeleteLog = currentUser.role === Role.ADMIN || currentUser.id === log.createdBy;
   const isCreatorOrAdmin = (userId: string) => currentUser.role === Role.ADMIN || currentUser.id === userId;
@@ -295,14 +364,11 @@ const LogDetailModal = ({
                   className="flex-1 bg-dark-900 border border-dark-700 rounded-lg p-2 text-white text-sm focus:ring-1 focus:ring-brand-500 outline-none resize-none h-20"
                 ></textarea>
                 <button 
-                  disabled={!note.trim()}
-                  onClick={() => {
-                    onAddHistory(log.id, note);
-                    setNote('');
-                  }}
-                  className="bg-brand-500 hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed text-white p-2 rounded-lg transition-colors"
+                  disabled={!note.trim() || isSubmitting}
+                  onClick={handleAddNote}
+                  className="bg-brand-500 hover:bg-brand-600 disabled:opacity-50 disabled:cursor-not-allowed text-white p-2 rounded-lg transition-colors flex items-center justify-center"
                 >
-                  <Save size={20} />
+                  {isSubmitting ? <Loader2 className="animate-spin" size={20} /> : <Save size={20} />}
                 </button>
               </div>
             )}
@@ -383,12 +449,14 @@ const App = () => {
   const [statusFilter, setStatusFilter] = useState<LogStatus>(LogStatus.ACTIVE);
   const [users, setUsers] = useState<User[]>([]);
   const [logs, setLogs] = useState<MaintenanceLog[]>([]);
+  const [loading, setLoading] = useState(true);
   
   // UI State
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [view, setView] = useState<'dashboard' | 'users'>('dashboard');
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [selectedLog, setSelectedLog] = useState<MaintenanceLog | null>(null);
+  const [isActionLoading, setIsActionLoading] = useState(false);
 
   // User Management State
   const [isUserModalOpen, setIsUserModalOpen] = useState(false);
@@ -402,34 +470,45 @@ const App = () => {
     image: null as File | null
   });
 
-  // --- INITIALIZATION ---
-  useEffect(() => {
-    // Load from LocalStorage or Seed
-    const savedUsers = localStorage.getItem('poly_users');
-    if (savedUsers) {
-      setUsers(JSON.parse(savedUsers));
-    } else {
-      setUsers(MOCK_USERS);
-      localStorage.setItem('poly_users', JSON.stringify(MOCK_USERS));
-    }
+  // --- SUPABASE FETCH ---
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      // Fetch Users
+      const { data: userData, error: userError } = await supabase.from('users').select('*');
+      if (userError) throw userError;
+      
+      const mappedUsers = (userData || []).map(mapUserFromDB);
+      setUsers(mappedUsers);
+      
+      // Auto-seed admin if empty
+      if (mappedUsers.length === 0) {
+         console.log("DB empty, seeding default admin...");
+         const defaultAdmin = MOCK_USERS[0];
+         await supabase.from('users').insert([mapUserToDB(defaultAdmin)]);
+         setUsers([defaultAdmin]);
+      }
 
-    const savedLogs = localStorage.getItem('poly_logs');
-    if (savedLogs) {
-      setLogs(JSON.parse(savedLogs));
-    } else {
-        // Seed some empty data if needed, or leave empty
-        setLogs([]);
+      // Fetch Logs
+      const { data: logData, error: logError } = await supabase.from('logs').select('*');
+      if (logError) throw logError;
+
+      const mappedLogs = (logData || []).map(mapLogFromDB);
+      // Sort logs by date desc
+      mappedLogs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      setLogs(mappedLogs);
+
+    } catch (error: any) {
+      console.error("Error fetching data:", error);
+      alert("Error connecting to database: " + error.message);
+    } finally {
+      setLoading(false);
     }
+  };
+
+  useEffect(() => {
+    fetchData();
   }, []);
-
-  // Save on change
-  useEffect(() => {
-    if (users.length > 0) localStorage.setItem('poly_users', JSON.stringify(users));
-  }, [users]);
-
-  useEffect(() => {
-    localStorage.setItem('poly_logs', JSON.stringify(logs));
-  }, [logs]);
 
 
   // --- HANDLERS ---
@@ -437,10 +516,11 @@ const App = () => {
   const handleCreateLog = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser) return;
+    setIsActionLoading(true);
 
     let imageUrl = '';
     if (newLogForm.image) {
-      // Convert to base64 for localstorage demo
+      // Convert to base64
       imageUrl = await new Promise((resolve) => {
         const reader = new FileReader();
         reader.onloadend = () => resolve(reader.result as string);
@@ -449,12 +529,12 @@ const App = () => {
     }
 
     const newLog: MaintenanceLog = {
-      id: generateId(),
+      id: generateId(), // Temporary ID, DB might generate its own, but we send UUID if configured or text
       title: newLogForm.title,
       description: newLogForm.description,
       priority: newLogForm.priority,
       status: LogStatus.ACTIVE,
-      type: activeTab, // Depends on which tab we are on
+      type: activeTab, 
       createdBy: currentUser.id,
       creatorName: currentUser.fullName,
       creatorRole: currentUser.role,
@@ -463,13 +543,32 @@ const App = () => {
       history: []
     };
 
-    setLogs([newLog, ...logs]);
-    setIsCreateModalOpen(false);
-    setNewLogForm({ title: '', description: '', priority: Priority.MEDIUM, image: null });
+    try {
+      // Map to DB and Insert
+      const dbLog = mapLogToDB(newLog);
+      // Remove ID if Supabase handles it, but our generateId is random string, so we can send it
+      const { error } = await supabase.from('logs').insert([dbLog]);
+      
+      if (error) throw error;
+      
+      setLogs([newLog, ...logs]);
+      setIsCreateModalOpen(false);
+      setNewLogForm({ title: '', description: '', priority: Priority.MEDIUM, image: null });
+    } catch (error: any) {
+      console.error("Error creating log:", error);
+      alert("Failed to save log: " + error.message);
+    } finally {
+      setIsActionLoading(false);
+    }
   };
 
-  const handleAddHistory = (logId: string, content: string) => {
+  const handleAddHistory = async (logId: string, content: string) => {
     if (!currentUser) return;
+    
+    // Find current log to get its history
+    const currentLog = logs.find(l => l.id === logId);
+    if (!currentLog) return;
+
     const newHistory: HistoryItem = {
       id: generateId(),
       content,
@@ -479,22 +578,36 @@ const App = () => {
       createdAt: new Date().toISOString()
     };
 
-    setLogs(logs.map(log => {
-      if (log.id === logId) {
-        return { ...log, history: [...log.history, newHistory] };
+    const updatedHistory = [...currentLog.history, newHistory];
+
+    try {
+      const { error } = await supabase.from('logs').update({ history: updatedHistory }).eq('id', logId);
+      if (error) throw error;
+
+      // Optimistic update
+      const updatedLogs = logs.map(log => {
+        if (log.id === logId) {
+          return { ...log, history: updatedHistory };
+        }
+        return log;
+      });
+      setLogs(updatedLogs);
+      
+      if (selectedLog && selectedLog.id === logId) {
+        setSelectedLog({ ...selectedLog, history: updatedHistory });
       }
-      return log;
-    }));
-    
-    // Update selected log view
-    if (selectedLog && selectedLog.id === logId) {
-      setSelectedLog({ ...selectedLog, history: [...selectedLog.history, newHistory] });
+
+    } catch (error: any) {
+      alert("Failed to update history: " + error.message);
     }
   };
 
-  const handleCloseLog = (logId: string) => {
+  const handleCloseLog = async (logId: string) => {
     if(!currentUser) return;
     
+    const currentLog = logs.find(l => l.id === logId);
+    if (!currentLog) return;
+
     const closeNote: HistoryItem = {
       id: generateId(),
       content: 'Log marked as CLOSED.',
@@ -503,37 +616,73 @@ const App = () => {
       creatorRole: currentUser.role,
       createdAt: new Date().toISOString()
     };
+    
+    const updatedHistory = [...currentLog.history, closeNote];
+    const closedAt = new Date().toISOString();
 
-    setLogs(logs.map(log => {
-      if (log.id === logId) {
-        return { ...log, status: LogStatus.CLOSED, closedAt: new Date().toISOString(), history: [...log.history, closeNote] };
-      }
-      return log;
-    }));
-    // Close modal
-    if (selectedLog) setSelectedLog(null);
-  };
+    try {
+      const { error } = await supabase.from('logs').update({ 
+        status: LogStatus.CLOSED,
+        closed_at: closedAt,
+        history: updatedHistory
+      }).eq('id', logId);
 
-  const handleDeleteLog = (logId: string) => {
-     setLogs(logs.filter(l => l.id !== logId));
-     setSelectedLog(null);
-  };
+      if(error) throw error;
 
-  const handleDeleteHistory = (logId: string, historyId: string) => {
       const updatedLogs = logs.map(log => {
-          if(log.id === logId) {
-              return { ...log, history: log.history.filter(h => h.id !== historyId)};
-          }
-          return log;
+        if (log.id === logId) {
+          return { ...log, status: LogStatus.CLOSED, closedAt, history: updatedHistory };
+        }
+        return log;
       });
       setLogs(updatedLogs);
-      if(selectedLog) {
-          setSelectedLog({ ...selectedLog, history: selectedLog.history.filter(h => h.id !== historyId) });
+      
+      if (selectedLog) setSelectedLog(null); // Close modal on close action?
+
+    } catch (error: any) {
+      alert("Failed to close log: " + error.message);
+    }
+  };
+
+  const handleDeleteLog = async (logId: string) => {
+     try {
+       const { error } = await supabase.from('logs').delete().eq('id', logId);
+       if (error) throw error;
+       setLogs(logs.filter(l => l.id !== logId));
+       setSelectedLog(null);
+     } catch (error: any) {
+       alert("Failed to delete log: " + error.message);
+     }
+  };
+
+  const handleDeleteHistory = async (logId: string, historyId: string) => {
+      const currentLog = logs.find(l => l.id === logId);
+      if (!currentLog) return;
+      
+      const updatedHistory = currentLog.history.filter(h => h.id !== historyId);
+      
+      try {
+        const { error } = await supabase.from('logs').update({ history: updatedHistory }).eq('id', logId);
+        if (error) throw error;
+
+        const updatedLogs = logs.map(log => {
+            if(log.id === logId) {
+                return { ...log, history: updatedHistory};
+            }
+            return log;
+        });
+        setLogs(updatedLogs);
+        if(selectedLog) {
+            setSelectedLog({ ...selectedLog, history: updatedHistory });
+        }
+      } catch (error: any) {
+        alert("Failed to delete history item: " + error.message);
       }
   };
 
-  const handleCreateUser = (e: React.FormEvent) => {
+  const handleCreateUser = async (e: React.FormEvent) => {
       e.preventDefault();
+      setIsActionLoading(true);
       const newUser: User = {
           id: generateId(),
           username: newUserForm.username,
@@ -541,20 +690,40 @@ const App = () => {
           fullName: newUserForm.fullName,
           role: newUserForm.role
       };
-      setUsers([...users, newUser]);
-      setIsUserModalOpen(false);
-      setNewUserForm({ username: '', fullName: '', role: Role.PRODUCTION });
+
+      try {
+        const dbUser = mapUserToDB(newUser);
+        const { error } = await supabase.from('users').insert([dbUser]);
+        if (error) throw error;
+        
+        setUsers([...users, newUser]);
+        setIsUserModalOpen(false);
+        setNewUserForm({ username: '', fullName: '', role: Role.PRODUCTION });
+      } catch (error: any) {
+        alert("Failed to create user: " + error.message);
+      } finally {
+        setIsActionLoading(false);
+      }
   };
 
-  const handleDeleteUser = (userId: string) => {
+  const handleDeleteUser = async (userId: string) => {
       if(userId === currentUser?.id) return; // Can't delete self
-      setUsers(users.filter(u => u.id !== userId));
+      
+      if(!confirm("Are you sure?")) return;
+
+      try {
+        const { error } = await supabase.from('users').delete().eq('id', userId);
+        if (error) throw error;
+        setUsers(users.filter(u => u.id !== userId));
+      } catch (error: any) {
+        alert("Failed to delete user: " + error.message);
+      }
   };
 
 
   // --- AUTH GUARD ---
   if (!currentUser) {
-    return <Login onLogin={setCurrentUser} />;
+    return <Login onLogin={setCurrentUser} users={users} isLoading={loading} />;
   }
 
   // --- FILTERED DATA ---
@@ -677,51 +846,57 @@ const App = () => {
               </div>
 
               {/* LIST */}
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                {filteredLogs.map(log => (
-                  <div 
-                    key={log.id} 
-                    onClick={() => setSelectedLog(log)}
-                    className="bg-dark-900 border border-dark-800 rounded-xl p-0 hover:border-brand-500/50 transition-all cursor-pointer group overflow-hidden flex flex-col h-full"
-                  >
-                    {log.imageUrl ? (
-                       <div className="h-40 w-full overflow-hidden relative">
-                         <img src={log.imageUrl} alt={log.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
-                         <div className="absolute inset-0 bg-gradient-to-t from-dark-900 to-transparent opacity-80"></div>
-                         <div className="absolute bottom-2 left-3">
-                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${PRIORITY_COLORS[log.priority]} uppercase`}>{log.priority}</span>
-                         </div>
-                       </div>
-                    ) : (
-                      <div className="h-2 bg-gradient-to-r from-dark-800 to-dark-700">
-                         {/* Colored top bar if no image */}
-                         <div className={`h-full w-20 ${log.priority === Priority.CRITICAL ? 'bg-red-500' : log.priority === Priority.HIGH ? 'bg-orange-500' : 'bg-blue-500'}`}></div>
+              {loading ? (
+                 <div className="flex justify-center items-center py-20">
+                    <Loader2 className="animate-spin text-brand-500" size={40} />
+                 </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                  {filteredLogs.map(log => (
+                    <div 
+                      key={log.id} 
+                      onClick={() => setSelectedLog(log)}
+                      className="bg-dark-900 border border-dark-800 rounded-xl p-0 hover:border-brand-500/50 transition-all cursor-pointer group overflow-hidden flex flex-col h-full"
+                    >
+                      {log.imageUrl ? (
+                        <div className="h-40 w-full overflow-hidden relative">
+                          <img src={log.imageUrl} alt={log.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                          <div className="absolute inset-0 bg-gradient-to-t from-dark-900 to-transparent opacity-80"></div>
+                          <div className="absolute bottom-2 left-3">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${PRIORITY_COLORS[log.priority]} uppercase`}>{log.priority}</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="h-2 bg-gradient-to-r from-dark-800 to-dark-700">
+                          {/* Colored top bar if no image */}
+                          <div className={`h-full w-20 ${log.priority === Priority.CRITICAL ? 'bg-red-500' : log.priority === Priority.HIGH ? 'bg-orange-500' : 'bg-blue-500'}`}></div>
+                        </div>
+                      )}
+                      
+                      <div className="p-4 flex-1 flex flex-col">
+                        <div className="flex justify-between items-start mb-2">
+                            <h3 className="font-semibold text-lg text-white line-clamp-1">{log.title}</h3>
+                            {!log.imageUrl && <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${PRIORITY_COLORS[log.priority]} uppercase`}>{log.priority}</span>}
+                        </div>
+                        <p className="text-zinc-400 text-sm line-clamp-2 mb-4 flex-1">{log.description}</p>
+                        
+                        <div className="mt-auto flex items-center justify-between pt-3 border-t border-dark-800 text-xs text-zinc-500">
+                            <div className="flex items-center gap-1">
+                              <Clock size={12} />
+                              <span>{getRelativeTime(log.createdAt)}</span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <span>by {log.creatorName}</span>
+                              <span className={`px-1 rounded bg-dark-800 text-[9px] uppercase`}>{log.creatorRole.slice(0,4)}</span>
+                            </div>
+                        </div>
                       </div>
-                    )}
-                    
-                    <div className="p-4 flex-1 flex flex-col">
-                       <div className="flex justify-between items-start mb-2">
-                          <h3 className="font-semibold text-lg text-white line-clamp-1">{log.title}</h3>
-                          {!log.imageUrl && <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${PRIORITY_COLORS[log.priority]} uppercase`}>{log.priority}</span>}
-                       </div>
-                       <p className="text-zinc-400 text-sm line-clamp-2 mb-4 flex-1">{log.description}</p>
-                       
-                       <div className="mt-auto flex items-center justify-between pt-3 border-t border-dark-800 text-xs text-zinc-500">
-                          <div className="flex items-center gap-1">
-                             <Clock size={12} />
-                             <span>{getRelativeTime(log.createdAt)}</span>
-                          </div>
-                          <div className="flex items-center gap-1">
-                             <span>by {log.creatorName}</span>
-                             <span className={`px-1 rounded bg-dark-800 text-[9px] uppercase`}>{log.creatorRole.slice(0,4)}</span>
-                          </div>
-                       </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
 
-              {filteredLogs.length === 0 && (
+              {!loading && filteredLogs.length === 0 && (
                 <div className="flex flex-col items-center justify-center py-20 text-zinc-600">
                   <div className="bg-dark-900 p-4 rounded-full mb-4">
                     <ClipboardList size={40} className="opacity-20" />
@@ -806,6 +981,7 @@ const App = () => {
                   <input type="file" accept="image/*" className="hidden" onChange={(e) => setNewLogForm({...newLogForm, image: e.target.files ? e.target.files[0] : null})} />
                </label>
             </div>
+            <p className="text-xs text-zinc-500 mt-1">Note: Large images may fail to save. Keep file size small.</p>
           </div>
 
           <div>
@@ -861,7 +1037,14 @@ const App = () => {
 
           <div className="flex justify-end pt-4 gap-2">
             <button type="button" onClick={() => setIsCreateModalOpen(false)} className="px-4 py-2 text-sm text-zinc-400 hover:text-white transition-colors">Cancel</button>
-            <button type="submit" className="bg-brand-500 hover:bg-brand-600 text-white px-6 py-2 rounded-lg text-sm font-medium transition-colors">Create Log</button>
+            <button 
+              type="submit" 
+              disabled={isActionLoading}
+              className="bg-brand-500 hover:bg-brand-600 disabled:opacity-50 text-white px-6 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
+            >
+               {isActionLoading && <Loader2 className="animate-spin" size={16} />}
+               Create Log
+            </button>
           </div>
         </form>
       </Modal>
@@ -888,7 +1071,14 @@ const App = () => {
             <div className="bg-yellow-500/10 border border-yellow-500/20 p-3 rounded-lg">
                <p className="text-yellow-500 text-xs">Default password will be set to 'password'.</p>
             </div>
-            <button type="submit" className="w-full bg-brand-500 hover:bg-brand-600 text-white py-2 rounded-lg font-medium transition-colors">Create User</button>
+            <button 
+              type="submit" 
+              disabled={isActionLoading}
+              className="w-full bg-brand-500 hover:bg-brand-600 disabled:opacity-50 text-white py-2 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
+            >
+               {isActionLoading && <Loader2 className="animate-spin" size={16} />}
+               Create User
+            </button>
          </form>
       </Modal>
 
