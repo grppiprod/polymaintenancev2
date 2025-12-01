@@ -1573,7 +1573,7 @@ const App = () => {
                           }
                       }}
                       className={`
-                        bg-dark-900 border rounded-lg md:rounded-xl p-0 transition-all cursor-pointer group overflow-hidden flex flex-row md:flex-col h-24 md:h-full relative items-stretch
+                        bg-dark-900 border rounded-lg md:rounded-xl p-0 transition-all cursor-pointer group overflow-hidden flex flex-row min-h-[6rem] h-auto relative items-stretch
                         ${isSelectionMode && selectedLogIds.has(log.id) 
                             ? 'border-brand-500 ring-1 ring-brand-500 bg-brand-500/5' 
                             : 'border-dark-800 hover:border-brand-500/50'}
@@ -1589,7 +1589,7 @@ const App = () => {
                       )}
 
                       {/* UNIFIED IMAGE CONTAINER */}
-                      <div className="w-24 md:w-full h-full md:h-40 shrink-0 overflow-hidden relative border-r md:border-r-0 md:border-b border-dark-800 bg-dark-900/50 flex items-center justify-center">
+                      <div className="w-20 md:w-28 shrink-0 overflow-hidden relative border-r border-dark-800 bg-dark-900/50 flex items-center justify-center">
                         {log.imageUrl ? (
                           <>
                             <img src={log.imageUrl} alt={log.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
@@ -1601,40 +1601,31 @@ const App = () => {
                               <span className="text-[8px] font-bold uppercase leading-tight">No Attachment</span>
                           </div>
                         )}
-                        
-                        {/* Desktop Priority Badge - Always in image area now */}
-                        <div className="absolute bottom-2 left-3 hidden md:block">
-                            <span className={`px-2 py-0.5 rounded text-[9px] md:text-[10px] font-bold border ${PRIORITY_COLORS[log.priority]} uppercase`}>{log.priority}</span>
-                        </div>
                       </div>
                       
                       <div className="p-3 md:p-4 flex-1 flex flex-col justify-between min-w-0">
                         <div className="flex justify-between items-start mb-1 md:mb-2">
                             <h3 className="font-semibold text-sm md:text-lg text-white line-clamp-1">{log.title}</h3>
-                            {/* Mobile Priority Badge - Always next to title on mobile */}
-                            <span className={`md:hidden px-1.5 py-0.5 rounded text-[9px] font-bold border ${PRIORITY_COLORS[log.priority]} uppercase shrink-0 ml-2`}>
-                                {log.priority === Priority.CRITICAL ? 'CRIT' : log.priority.slice(0,3)}
+                            {/* Priority Badge - Always next to title */}
+                            <span className={`px-1.5 py-0.5 rounded text-[9px] md:text-[10px] font-bold border ${PRIORITY_COLORS[log.priority]} uppercase shrink-0 ml-2`}>
+                                {log.priority === Priority.CRITICAL ? 'CRIT' : log.priority}
                             </span>
                         </div>
                         
-                        <p className="text-zinc-400 text-xs md:text-sm line-clamp-2 mb-0 md:mb-4 flex-1 md:flex-none">{log.description}</p>
+                        <p className="text-zinc-400 text-xs md:text-sm line-clamp-2 mb-2 md:mb-4 flex-1 md:flex-none">{log.description}</p>
                         
-                        {/* Desktop Footer */}
-                        <div className="mt-auto hidden md:flex items-center justify-between pt-2 md:pt-3 border-t border-dark-800 text-[10px] md:text-xs text-zinc-500">
-                            <div className="flex items-center gap-1">
-                              <Clock size={12} />
-                              <span>{formatDate(log.createdAt)}</span>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <span>by {log.creatorName}</span>
-                              <span className={`px-1 rounded bg-dark-800 text-[9px] uppercase`}>{log.creatorRole.slice(0,4)}</span>
-                            </div>
-                        </div>
-
-                        {/* Mobile Footer (Simplified) */}
-                        <div className="md:hidden flex items-center gap-2 text-[10px] text-zinc-500 mt-1">
-                             <Clock size={10} />
-                             <span>{formatDate(log.createdAt)}</span>
+                        {/* Unified Footer (Two Lines) */}
+                        <div className="mt-auto flex flex-col gap-1 text-[10px] md:text-xs text-zinc-500">
+                             <div className="flex items-center gap-1.5">
+                                <Clock size={12} />
+                                <span>{formatDate(log.createdAt)}</span>
+                             </div>
+                             <div className="flex items-center gap-1.5">
+                                <span className="text-zinc-400">by {log.creatorName}</span>
+                                <span className={`px-1.5 py-0.5 rounded-[4px] border ${ROLE_BADGES[log.creatorRole]} text-[9px] md:text-[10px] font-medium leading-none`}>
+                                    {log.creatorRole}
+                                </span>
+                             </div>
                         </div>
                       </div>
                     </div>
