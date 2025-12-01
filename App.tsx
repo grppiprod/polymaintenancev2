@@ -1119,14 +1119,13 @@ const App = () => {
       const { error } = await supabase.from('logs').update({ history: updatedHistory }).eq('id', logId);
       if (error) throw error;
 
-      // Optimistic update
-      const updatedLogs = logs.map(log => {
+      // Optimistic update using functional state
+      setLogs(prev => prev.map(log => {
         if (log.id === logId) {
           return { ...log, history: updatedHistory };
         }
         return log;
-      });
-      setLogs(updatedLogs);
+      }));
       
       if (selectedLog && selectedLog.id === logId) {
         setSelectedLog({ ...selectedLog, history: updatedHistory });
@@ -1168,13 +1167,12 @@ const App = () => {
 
       if(error) throw error;
 
-      const updatedLogs = logs.map(log => {
+      setLogs(prev => prev.map(log => {
         if (log.id === logId) {
           return { ...log, status: LogStatus.CLOSED, closedAt, history: updatedHistory };
         }
         return log;
-      });
-      setLogs(updatedLogs);
+      }));
       
       if (selectedLog) setSelectedLog(null); // Close modal on close action?
       addToast('Log closed', 'success');
@@ -1191,8 +1189,12 @@ const App = () => {
      try {
        const { error } = await supabase.from('logs').delete().eq('id', logId);
        if (error) throw error;
-       setLogs(logs.filter(l => l.id !== logId));
-       setSelectedLog(null);
+       
+       setLogs(prev => prev.filter(l => l.id !== logId));
+       
+       if (selectedLog?.id === logId) {
+           setSelectedLog(null);
+       }
        addToast('Log deleted', 'success');
        // Notify others (optional for delete, maybe distracting, but good for consistency)
        sendBroadcast(`A log was deleted by ${currentUser?.fullName}`);
@@ -1214,7 +1216,7 @@ const App = () => {
         
         if (error) throw error;
         
-        setLogs(logs.filter(l => !selectedLogIds.has(l.id)));
+        setLogs(prev => prev.filter(l => !selectedLogIds.has(l.id)));
         setSelectedLogIds(new Set());
         setIsSelectionMode(false); // Exit selection mode
         addToast(`${idsToDelete.length} logs deleted`, 'success');
@@ -1236,13 +1238,12 @@ const App = () => {
         const { error } = await supabase.from('logs').update({ history: updatedHistory }).eq('id', logId);
         if (error) throw error;
 
-        const updatedLogs = logs.map(log => {
+        setLogs(prev => prev.map(log => {
             if(log.id === logId) {
                 return { ...log, history: updatedHistory};
             }
             return log;
-        });
-        setLogs(updatedLogs);
+        }));
         if(selectedLog) {
             setSelectedLog({ ...selectedLog, history: updatedHistory });
         }
