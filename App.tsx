@@ -1009,6 +1009,21 @@ const App = () => {
               setLogs(prev => prev.filter(l => l.id !== payload.old.id));
           }
       })
+      // Listen to USERS table changes for admin dashboard live updates
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, (payload) => {
+          if (payload.eventType === 'INSERT') {
+             const newUser = mapUserFromDB(payload.new);
+             setUsers(prev => {
+                if (prev.some(u => u.id === newUser.id)) return prev;
+                return [...prev, newUser];
+             });
+          } else if (payload.eventType === 'UPDATE') {
+             const updatedUser = mapUserFromDB(payload.new);
+             setUsers(prev => prev.map(u => u.id === updatedUser.id ? updatedUser : u));
+          } else if (payload.eventType === 'DELETE') {
+             setUsers(prev => prev.filter(u => u.id !== payload.old.id));
+          }
+      })
       .on('broadcast', { event: 'app_notification' }, ({ payload }) => {
           // Handle explicit broadcast from other clients
           // Payload: { message, userId, type }
@@ -1082,7 +1097,9 @@ const App = () => {
       const { error } = await supabase.from('logs').insert([dbLog]);
       if (error) throw error;
       
-      setLogs([newLog, ...logs]);
+      // Use functional state update to prevent stale closures
+      setLogs(prev => [newLog, ...prev]);
+      
       setIsCreateModalOpen(false);
       setNewLogForm({ title: '', description: '', priority: Priority.MEDIUM, image: null });
       addToast('Log created successfully', 'success');
@@ -1269,7 +1286,8 @@ const App = () => {
         const { error } = await supabase.from('users').insert([dbUser]);
         if (error) throw error;
         
-        setUsers([...users, newUser]);
+        setUsers(prev => [...prev, newUser]);
+        
         setIsUserModalOpen(false);
         setNewUserForm({ username: '', fullName: '', role: Role.PRODUCTION });
         addToast('User created', 'success');
@@ -1301,7 +1319,7 @@ const App = () => {
           localStorage.setItem('polymaintenance_user', JSON.stringify(updatedUser));
           
           // Update users list locally
-          setUsers(users.map(u => u.id === currentUser.id ? updatedUser : u));
+          setUsers(prev => prev.map(u => u.id === currentUser.id ? updatedUser : u));
 
           setIsChangePasswordOpen(false);
           addToast('Password updated', 'success');
@@ -1320,7 +1338,7 @@ const App = () => {
       try {
         const { error } = await supabase.from('users').delete().eq('id', userId);
         if (error) throw error;
-        setUsers(users.filter(u => u.id !== userId));
+        setUsers(prev => prev.filter(u => u.id !== userId));
         addToast('User deleted', 'success');
       } catch (error: any) {
         alert("Failed to delete user: " + (error.message || JSON.stringify(error)));
