@@ -1573,7 +1573,7 @@ const App = () => {
                           }
                       }}
                       className={`
-                        bg-dark-900 border rounded-lg md:rounded-xl p-0 transition-all cursor-pointer group overflow-hidden flex flex-row min-h-[6rem] h-auto relative items-stretch
+                        bg-dark-900 border rounded-lg md:rounded-xl p-0 transition-all cursor-pointer group overflow-hidden flex flex-row md:flex-col min-h-[6rem] md:h-full relative items-stretch
                         ${isSelectionMode && selectedLogIds.has(log.id) 
                             ? 'border-brand-500 ring-1 ring-brand-500 bg-brand-500/5' 
                             : 'border-dark-800 hover:border-brand-500/50'}
@@ -1589,7 +1589,7 @@ const App = () => {
                       )}
 
                       {/* UNIFIED IMAGE CONTAINER */}
-                      <div className="w-20 md:w-28 shrink-0 overflow-hidden relative border-r border-dark-800 bg-dark-900/50 flex items-center justify-center">
+                      <div className="w-20 md:w-full h-auto md:h-40 shrink-0 overflow-hidden relative border-r md:border-r-0 md:border-b border-dark-800 bg-dark-900/50 flex items-center justify-center">
                         {log.imageUrl ? (
                           <>
                             <img src={log.imageUrl} alt={log.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
