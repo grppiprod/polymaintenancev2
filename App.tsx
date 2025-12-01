@@ -31,7 +31,8 @@ import {
   Bell,
   BellRing,
   Wifi,
-  Download
+  Download,
+  ImageOff
 } from 'lucide-react';
 import { Role, LogType, LogStatus, Priority, User, MaintenanceLog, HistoryItem } from './types';
 import { MOCK_USERS, PRIORITY_COLORS, ROLE_BADGES } from './constants';
@@ -1544,29 +1545,33 @@ const App = () => {
                           </div>
                       )}
 
-                      {log.imageUrl ? (
-                        <div className="w-24 md:w-full h-full md:h-40 shrink-0 overflow-hidden relative border-r md:border-r-0 md:border-b border-dark-800">
-                          <img src={log.imageUrl} alt={log.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
-                          <div className="hidden md:block absolute inset-0 bg-gradient-to-t from-dark-900 to-transparent opacity-80"></div>
-                          <div className="absolute bottom-2 left-3 hidden md:block">
-                              <span className={`px-2 py-0.5 rounded text-[9px] md:text-[10px] font-bold border ${PRIORITY_COLORS[log.priority]} uppercase`}>{log.priority}</span>
+                      {/* UNIFIED IMAGE CONTAINER */}
+                      <div className="w-24 md:w-full h-full md:h-40 shrink-0 overflow-hidden relative border-r md:border-r-0 md:border-b border-dark-800 bg-dark-900/50 flex items-center justify-center">
+                        {log.imageUrl ? (
+                          <>
+                            <img src={log.imageUrl} alt={log.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                            <div className="hidden md:block absolute inset-0 bg-gradient-to-t from-dark-900 to-transparent opacity-80"></div>
+                          </>
+                        ) : (
+                          <div className="flex flex-col items-center justify-center text-zinc-600 gap-1 p-1 text-center">
+                              <ImageOff size={20} />
+                              <span className="text-[8px] font-bold uppercase leading-tight">No Attachment</span>
                           </div>
+                        )}
+                        
+                        {/* Desktop Priority Badge - Always in image area now */}
+                        <div className="absolute bottom-2 left-3 hidden md:block">
+                            <span className={`px-2 py-0.5 rounded text-[9px] md:text-[10px] font-bold border ${PRIORITY_COLORS[log.priority]} uppercase`}>{log.priority}</span>
                         </div>
-                      ) : (
-                        <div className="w-2 md:w-full h-full md:h-2 bg-gradient-to-b md:bg-gradient-to-r from-dark-800 to-dark-700 shrink-0">
-                          {/* Colored bar */}
-                          <div className={`h-full w-full ${log.priority === Priority.CRITICAL ? 'bg-red-500' : log.priority === Priority.HIGH ? 'bg-orange-500' : 'bg-blue-500'}`}></div>
-                        </div>
-                      )}
+                      </div>
                       
                       <div className="p-3 md:p-4 flex-1 flex flex-col justify-between min-w-0">
                         <div className="flex justify-between items-start mb-1 md:mb-2">
                             <h3 className="font-semibold text-sm md:text-lg text-white line-clamp-1">{log.title}</h3>
-                            {/* Mobile Priority Badge (or if no image on desktop) */}
+                            {/* Mobile Priority Badge - Always next to title on mobile */}
                             <span className={`md:hidden px-1.5 py-0.5 rounded text-[9px] font-bold border ${PRIORITY_COLORS[log.priority]} uppercase shrink-0 ml-2`}>
                                 {log.priority === Priority.CRITICAL ? 'CRIT' : log.priority.slice(0,3)}
                             </span>
-                            {!log.imageUrl && <span className={`hidden md:inline px-2 py-0.5 rounded text-[10px] font-bold border ${PRIORITY_COLORS[log.priority]} uppercase`}>{log.priority}</span>}
                         </div>
                         
                         <p className="text-zinc-400 text-xs md:text-sm line-clamp-2 mb-0 md:mb-4 flex-1 md:flex-none">{log.description}</p>
