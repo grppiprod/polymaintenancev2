@@ -32,7 +32,8 @@ import {
   BellRing,
   Wifi,
   Download,
-  ImageOff
+  ImageOff,
+  ArrowUpDown
 } from 'lucide-react';
 import { Role, LogType, LogStatus, Priority, User, MaintenanceLog, HistoryItem } from './types';
 import { MOCK_USERS, PRIORITY_COLORS, ROLE_BADGES } from './constants';
@@ -54,6 +55,14 @@ const getRelativeTime = (dateStr: string) => {
   if (days === 0) return 'Today';
   if (days === 1) return 'Yesterday';
   return `${days} days ago`;
+};
+
+// Priority Weights for Sorting
+const PRIORITY_WEIGHTS = {
+  [Priority.CRITICAL]: 4,
+  [Priority.HIGH]: 3,
+  [Priority.MEDIUM]: 2,
+  [Priority.LOW]: 1,
 };
 
 // Image Compression Utility
@@ -169,6 +178,8 @@ interface ToastMessage {
   message: string;
   type: 'info' | 'success' | 'error';
 }
+
+type SortOption = 'priority' | 'date_newest' | 'date_oldest';
 
 // --- COMPONENTS ---
 
@@ -712,6 +723,7 @@ const App = () => {
 
   const [activeTab, setActiveTab] = useState<LogType>(LogType.REPAIR);
   const [statusFilter, setStatusFilter] = useState<LogStatus>(LogStatus.ACTIVE);
+  const [sortBy, setSortBy] = useState<SortOption>('priority');
   const [users, setUsers] = useState<User[]>([]);
   const [logs, setLogs] = useState<MaintenanceLog[]>([]);
   const [loading, setLoading] = useState(true);
@@ -941,8 +953,7 @@ const App = () => {
       if (logError) throw logError;
 
       const mappedLogs = (logData || []).map(mapLogFromDB);
-      // Sort logs by date desc
-      mappedLogs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      // Sort logs by date desc initially (handled by filteredLogs logic later)
       setLogs(mappedLogs);
 
     } catch (error: any) {
@@ -973,7 +984,7 @@ const App = () => {
               setLogs(prev => {
                   if (prev.some(l => l.id === newLog.id)) return prev;
                   const newList = [newLog, ...prev];
-                  return newList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+                  return newList;
               });
               if (newLog.createdBy !== currentUser.id) {
                   addToast(`New Log: ${newLog.title} by ${newLog.creatorName}`, 'info');
@@ -1343,6 +1354,22 @@ const App = () => {
   // --- FILTERED DATA ---
   const filteredLogs = logs.filter(l => l.type === activeTab && l.status === statusFilter);
 
+  // Apply Sorting
+  filteredLogs.sort((a, b) => {
+    if (sortBy === 'priority') {
+      const weightA = PRIORITY_WEIGHTS[a.priority];
+      const weightB = PRIORITY_WEIGHTS[b.priority];
+      if (weightA !== weightB) return weightB - weightA; // Higher weight first
+      // Secondary Sort by Date Desc
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    } else if (sortBy === 'date_oldest') {
+      return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+    } else {
+      // date_newest
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    }
+  });
+
   return (
     <div className="flex h-screen bg-dark-950 text-zinc-100 overflow-hidden relative">
       
@@ -1496,19 +1523,35 @@ const App = () => {
                   </button>
                 </div>
 
-                <div className="flex bg-dark-900 p-1 rounded-lg border border-dark-800 w-full md:w-auto">
-                    <button 
-                      onClick={() => setStatusFilter(LogStatus.ACTIVE)}
-                      className={`flex-1 md:flex-none px-3 py-1 text-xs rounded-md transition-all ${statusFilter === LogStatus.ACTIVE ? 'bg-dark-800 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
+                <div className="flex items-center gap-2 w-full md:w-auto mt-2 md:mt-0">
+                  {/* Sort Dropdown */}
+                  <div className="relative flex-1 md:flex-none">
+                    <select
+                      value={sortBy}
+                      onChange={(e) => setSortBy(e.target.value as SortOption)}
+                      className="w-full md:w-auto appearance-none bg-dark-900 border border-dark-800 text-zinc-400 text-xs md:text-sm rounded-lg px-3 py-2 pr-8 focus:outline-none focus:border-brand-500 cursor-pointer h-full"
                     >
-                      Active ({logs.filter(l => l.type === activeTab && l.status === LogStatus.ACTIVE).length})
-                    </button>
-                    <button 
-                      onClick={() => setStatusFilter(LogStatus.CLOSED)}
-                      className={`flex-1 md:flex-none px-3 py-1 text-xs rounded-md transition-all ${statusFilter === LogStatus.CLOSED ? 'bg-dark-800 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
-                    >
-                      Closed ({logs.filter(l => l.type === activeTab && l.status === LogStatus.CLOSED).length})
-                    </button>
+                      <option value="priority">Sort: Priority</option>
+                      <option value="date_newest">Sort: Newest</option>
+                      <option value="date_oldest">Sort: Oldest</option>
+                    </select>
+                    <ArrowUpDown className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" size={14} />
+                  </div>
+
+                  <div className="flex bg-dark-900 p-1 rounded-lg border border-dark-800 flex-1 md:flex-none">
+                      <button 
+                        onClick={() => setStatusFilter(LogStatus.ACTIVE)}
+                        className={`flex-1 md:flex-none px-3 py-1 text-xs rounded-md transition-all ${statusFilter === LogStatus.ACTIVE ? 'bg-dark-800 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
+                      >
+                        Active ({logs.filter(l => l.type === activeTab && l.status === LogStatus.ACTIVE).length})
+                      </button>
+                      <button 
+                        onClick={() => setStatusFilter(LogStatus.CLOSED)}
+                        className={`flex-1 md:flex-none px-3 py-1 text-xs rounded-md transition-all ${statusFilter === LogStatus.CLOSED ? 'bg-dark-800 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
+                      >
+                        Closed ({logs.filter(l => l.type === activeTab && l.status === LogStatus.CLOSED).length})
+                      </button>
+                  </div>
                 </div>
               </div>
 
@@ -1580,7 +1623,7 @@ const App = () => {
                         <div className="mt-auto hidden md:flex items-center justify-between pt-2 md:pt-3 border-t border-dark-800 text-[10px] md:text-xs text-zinc-500">
                             <div className="flex items-center gap-1">
                               <Clock size={12} />
-                              <span>{getRelativeTime(log.createdAt)}</span>
+                              <span>{formatDate(log.createdAt)}</span>
                             </div>
                             <div className="flex items-center gap-1">
                               <span>by {log.creatorName}</span>
@@ -1591,9 +1634,7 @@ const App = () => {
                         {/* Mobile Footer (Simplified) */}
                         <div className="md:hidden flex items-center gap-2 text-[10px] text-zinc-500 mt-1">
                              <Clock size={10} />
-                             <span>{getRelativeTime(log.createdAt)}</span>
-                             <span>•</span>
-                             <span>{log.creatorName.split(' ')[0]}</span>
+                             <span>{formatDate(log.createdAt)}</span>
                         </div>
                       </div>
                     </div>
