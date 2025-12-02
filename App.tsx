@@ -380,6 +380,170 @@ const Modal = ({ isOpen, onClose, title, children, size = 'md' }: any) => {
   );
 };
 
+// COMPONENT: Create Log Modal (Extracted to fix lag)
+const CreateLogModal = ({ isOpen, onClose, onSubmit, activeTab, currentUser, isLoading }: any) => {
+    const [form, setForm] = useState({
+        title: '',
+        description: '',
+        priority: Priority.MEDIUM,
+        image: null as File | null
+    });
+
+    // Reset form when modal opens
+    useEffect(() => {
+        if (isOpen) {
+            setForm({
+                title: '',
+                description: '',
+                priority: Priority.MEDIUM,
+                image: null
+            });
+        }
+    }, [isOpen]);
+
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        onSubmit(form);
+    };
+
+    return (
+        <Modal 
+            isOpen={isOpen} 
+            onClose={onClose} 
+            title={`Create New ${activeTab === LogType.REPAIR ? 'Repair' : 'Maintenance'} Log`}
+        >
+            <form onSubmit={handleSubmit} className="space-y-4">
+                <div>
+                    <label className="block text-sm font-medium text-zinc-400 mb-2">Attach Picture</label>
+                    <div className="flex items-center gap-4">
+                        <div className="w-20 h-20 bg-dark-950 border border-dashed border-dark-700 rounded-lg flex items-center justify-center overflow-hidden shrink-0">
+                            {form.image ? (
+                                <img src={URL.createObjectURL(form.image)} className="w-full h-full object-cover" />
+                            ) : <span className="text-[10px] text-zinc-600">No Image</span>}
+                        </div>
+                        <label className="cursor-pointer bg-dark-800 hover:bg-dark-700 border border-dark-700 text-zinc-300 px-3 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors">
+                            <FileImage size={16} /> Upload Image
+                            <input type="file" accept="image/*" className="hidden" onChange={(e) => setForm({...form, image: e.target.files ? e.target.files[0] : null})} />
+                        </label>
+                    </div>
+                    <p className="text-xs text-zinc-500 mt-1">Note: Images will be compressed to save space.</p>
+                </div>
+
+                <div>
+                    <label className="block text-sm font-medium text-zinc-400 mb-1">Title</label>
+                    <input 
+                        required
+                        type="text" 
+                        className="w-full bg-dark-950 border border-dark-700 rounded-lg p-2.5 text-white text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 outline-none"
+                        placeholder={activeTab === LogType.REPAIR ? "e.g., Conveyor Belt Squeaking" : "e.g., Monthly Hydraulic Check"}
+                        value={form.title}
+                        onChange={e => setForm({...form, title: e.target.value})}
+                    />
+                </div>
+
+                <div>
+                    <label className="block text-sm font-medium text-zinc-400 mb-1">Description</label>
+                    <textarea 
+                        required
+                        rows={4}
+                        className="w-full bg-dark-950 border border-dark-700 rounded-lg p-2.5 text-white text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 outline-none resize-none"
+                        placeholder="Provide a detailed description of the issue..."
+                        value={form.description}
+                        onChange={e => setForm({...form, description: e.target.value})}
+                    ></textarea>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                    <div>
+                        <label className="block text-sm font-medium text-zinc-400 mb-1">Type</label>
+                        <select disabled className="w-full bg-dark-800 border border-dark-700 rounded-lg p-2.5 text-zinc-400 text-sm cursor-not-allowed">
+                            <option>{activeTab === LogType.REPAIR ? 'Repair' : 'Preventive Maintenance'}</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-zinc-400 mb-1">Priority</label>
+                        <select 
+                            value={form.priority}
+                            onChange={e => setForm({...form, priority: e.target.value as Priority})}
+                            className="w-full bg-dark-950 border border-dark-700 rounded-lg p-2.5 text-white text-sm focus:border-brand-500 outline-none"
+                        >
+                            {Object.values(Priority).map(p => <option key={p} value={p}>{p}</option>)}
+                        </select>
+                    </div>
+                </div>
+
+                <div>
+                    <label className="block text-sm font-medium text-zinc-400 mb-1">Reporting As</label>
+                    <div className="w-full bg-dark-800 border border-dark-700 rounded-lg p-2.5 text-zinc-300 text-sm flex justify-between items-center">
+                        <span>{currentUser.fullName}</span>
+                        <span className={`text-[10px] px-2 py-0.5 rounded border ${ROLE_BADGES[currentUser.role]}`}>{currentUser.role}</span>
+                    </div>
+                </div>
+
+                <div className="flex justify-end pt-4 gap-2">
+                    <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-zinc-400 hover:text-white transition-colors">Cancel</button>
+                    <button 
+                        type="submit" 
+                        disabled={isLoading}
+                        className="bg-brand-500 hover:bg-brand-600 disabled:opacity-50 text-white px-6 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                    >
+                        {isLoading && <Loader2 className="animate-spin" size={16} />}
+                        Create Log
+                    </button>
+                </div>
+            </form>
+        </Modal>
+    );
+};
+
+// COMPONENT: Create User Modal (Extracted to fix lag)
+const CreateUserModal = ({ isOpen, onClose, onSubmit, isLoading }: any) => {
+    const [form, setForm] = useState({ username: '', fullName: '', role: Role.PRODUCTION });
+
+    useEffect(() => {
+        if(isOpen) setForm({ username: '', fullName: '', role: Role.PRODUCTION });
+    }, [isOpen]);
+
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        onSubmit(form);
+    }
+
+    return (
+        <Modal isOpen={isOpen} onClose={onClose} title="Add New User" size="sm">
+            <form onSubmit={handleSubmit} className="space-y-4">
+                <div>
+                    <label className="block text-sm font-medium text-zinc-400 mb-1">Full Name</label>
+                    <input required type="text" className="w-full bg-dark-950 border border-dark-700 rounded-lg p-2.5 text-white text-sm" value={form.fullName} onChange={e => setForm({...form, fullName: e.target.value})} />
+                </div>
+                <div>
+                    <label className="block text-sm font-medium text-zinc-400 mb-1">Username</label>
+                    <input required type="text" className="w-full bg-dark-950 border border-dark-700 rounded-lg p-2.5 text-white text-sm" value={form.username} onChange={e => setForm({...form, username: e.target.value})} />
+                </div>
+                <div>
+                    <label className="block text-sm font-medium text-zinc-400 mb-1">Role</label>
+                    <select className="w-full bg-dark-950 border border-dark-700 rounded-lg p-2.5 text-white text-sm" value={form.role} onChange={e => setForm({...form, role: e.target.value as Role})}>
+                        <option value={Role.PRODUCTION}>Production</option>
+                        <option value={Role.ENGINEERING}>Engineering</option>
+                        <option value={Role.ADMIN}>Admin</option>
+                    </select>
+                </div>
+                <div className="bg-yellow-500/10 border border-yellow-500/20 p-3 rounded-lg">
+                    <p className="text-yellow-500 text-xs">Default password will be set to 'password'.</p>
+                </div>
+                <button 
+                    type="submit" 
+                    disabled={isLoading}
+                    className="w-full bg-brand-500 hover:bg-brand-600 disabled:opacity-50 text-white py-2 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
+                >
+                    {isLoading && <Loader2 className="animate-spin" size={16} />}
+                    Create User
+                </button>
+            </form>
+        </Modal>
+    );
+};
+
 // Change Password Modal
 const ChangePasswordModal = ({ isOpen, onClose, onSubmit, isLoading }: any) => {
     const [form, setForm] = useState({ current: '', new: '', confirm: '' });
@@ -743,7 +907,6 @@ const App = () => {
 
   // User Management State
   const [isUserModalOpen, setIsUserModalOpen] = useState(false);
-  const [newUserForm, setNewUserForm] = useState({ username: '', fullName: '', role: Role.PRODUCTION });
 
   // Change Password State
   const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
@@ -751,14 +914,6 @@ const App = () => {
   // Bulk Delete State (Admin Only)
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedLogIds, setSelectedLogIds] = useState<Set<string>>(new Set());
-
-  // Create Log State
-  const [newLogForm, setNewLogForm] = useState({
-    title: '',
-    description: '',
-    priority: Priority.MEDIUM,
-    image: null as File | null
-  });
 
   // --- AUTH HANDLERS ---
   const handleLogin = (user: User) => {
@@ -804,24 +959,6 @@ const App = () => {
             // Optionally update database with current subscription to ensure it's fresh
             return;
         }
-
-        // NOTE: In a real production app, you need a VAPID Public Key from your backend
-        // const response = await fetch('/api/vapid-key');
-        // const vapidPublicKey = await response.text();
-        // For now, we are skipping the actual subscription call because we don't have a VAPID key.
-        // Uncommenting the below without a valid key will throw an error.
-        /*
-        const subscription = await registration.pushManager.subscribe({
-            userVisibleOnly: true,
-            applicationServerKey: urlBase64ToUint8Array("YOUR_VAPID_PUBLIC_KEY")
-        });
-        
-        // Send subscription to database
-        await supabase.from('push_subscriptions').upsert({ 
-            user_id: currentUser?.id,
-            subscription: JSON.stringify(subscription) 
-        });
-        */
        console.log("Push subscription logic ready (requires VAPID key)");
 
     } catch (e) {
@@ -1059,16 +1196,16 @@ const App = () => {
       }
   };
 
-  const handleCreateLog = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // Updated Handler to accept form data directly (State is now in Child Component)
+  const handleCreateLog = async (formData: any) => {
     if (!currentUser) return;
     setIsActionLoading(true);
 
     let imageUrl = '';
-    if (newLogForm.image) {
+    if (formData.image) {
       try {
         // Use compression before saving
-        imageUrl = await compressImage(newLogForm.image);
+        imageUrl = await compressImage(formData.image);
       } catch (err) {
         console.error("Compression failed", err);
         alert("Failed to process image.");
@@ -1079,9 +1216,9 @@ const App = () => {
 
     const newLog: MaintenanceLog = {
       id: generateId(), 
-      title: newLogForm.title,
-      description: newLogForm.description,
-      priority: newLogForm.priority,
+      title: formData.title,
+      description: formData.description,
+      priority: formData.priority,
       status: LogStatus.ACTIVE,
       type: activeTab, 
       createdBy: currentUser.id,
@@ -1101,7 +1238,7 @@ const App = () => {
       setLogs(prev => [newLog, ...prev]);
       
       setIsCreateModalOpen(false);
-      setNewLogForm({ title: '', description: '', priority: Priority.MEDIUM, image: null });
+      // Form reset handled by child component effect
       addToast('Log created successfully', 'success');
       
       // Notify others
@@ -1270,15 +1407,15 @@ const App = () => {
       }
   };
 
-  const handleCreateUser = async (e: React.FormEvent) => {
-      e.preventDefault();
+  // Updated Handler to accept form data directly
+  const handleCreateUser = async (formData: any) => {
       setIsActionLoading(true);
       const newUser: User = {
           id: generateId(),
-          username: newUserForm.username,
+          username: formData.username,
           password: 'password', // Default password
-          fullName: newUserForm.fullName,
-          role: newUserForm.role
+          fullName: formData.fullName,
+          role: formData.role
       };
 
       try {
@@ -1289,7 +1426,7 @@ const App = () => {
         setUsers(prev => [...prev, newUser]);
         
         setIsUserModalOpen(false);
-        setNewUserForm({ username: '', fullName: '', role: Role.PRODUCTION });
+        // Form reset handled by child component
         addToast('User created', 'success');
       } catch (error: any) {
         alert("Failed to create user: " + (error.message || JSON.stringify(error)));
@@ -1733,125 +1870,22 @@ const App = () => {
       </main>
 
       {/* CREATE LOG MODAL */}
-      <Modal 
-        isOpen={isCreateModalOpen} 
-        onClose={() => setIsCreateModalOpen(false)} 
-        title={`Create New ${activeTab === LogType.REPAIR ? 'Repair' : 'Maintenance'} Log`}
-      >
-        <form onSubmit={handleCreateLog} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-zinc-400 mb-2">Attach Picture</label>
-            <div className="flex items-center gap-4">
-               <div className="w-20 h-20 bg-dark-950 border border-dashed border-dark-700 rounded-lg flex items-center justify-center overflow-hidden shrink-0">
-                  {newLogForm.image ? (
-                     <img src={URL.createObjectURL(newLogForm.image)} className="w-full h-full object-cover" />
-                  ) : <span className="text-[10px] text-zinc-600">No Image</span>}
-               </div>
-               <label className="cursor-pointer bg-dark-800 hover:bg-dark-700 border border-dark-700 text-zinc-300 px-3 py-2 rounded-lg text-sm flex items-center gap-2 transition-colors">
-                  <FileImage size={16} /> Upload Image
-                  <input type="file" accept="image/*" className="hidden" onChange={(e) => setNewLogForm({...newLogForm, image: e.target.files ? e.target.files[0] : null})} />
-               </label>
-            </div>
-            <p className="text-xs text-zinc-500 mt-1">Note: Images will be compressed to save space.</p>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-zinc-400 mb-1">Title</label>
-            <input 
-              required
-              type="text" 
-              className="w-full bg-dark-950 border border-dark-700 rounded-lg p-2.5 text-white text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 outline-none"
-              placeholder={activeTab === LogType.REPAIR ? "e.g., Conveyor Belt Squeaking" : "e.g., Monthly Hydraulic Check"}
-              value={newLogForm.title}
-              onChange={e => setNewLogForm({...newLogForm, title: e.target.value})}
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-zinc-400 mb-1">Description</label>
-            <textarea 
-              required
-              rows={4}
-              className="w-full bg-dark-950 border border-dark-700 rounded-lg p-2.5 text-white text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 outline-none resize-none"
-              placeholder="Provide a detailed description of the issue..."
-              value={newLogForm.description}
-              onChange={e => setNewLogForm({...newLogForm, description: e.target.value})}
-            ></textarea>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-zinc-400 mb-1">Type</label>
-              <select disabled className="w-full bg-dark-800 border border-dark-700 rounded-lg p-2.5 text-zinc-400 text-sm cursor-not-allowed">
-                 <option>{activeTab === LogType.REPAIR ? 'Repair' : 'Preventive Maintenance'}</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-zinc-400 mb-1">Priority</label>
-              <select 
-                value={newLogForm.priority}
-                onChange={e => setNewLogForm({...newLogForm, priority: e.target.value as Priority})}
-                className="w-full bg-dark-950 border border-dark-700 rounded-lg p-2.5 text-white text-sm focus:border-brand-500 outline-none"
-              >
-                 {Object.values(Priority).map(p => <option key={p} value={p}>{p}</option>)}
-              </select>
-            </div>
-          </div>
-
-          <div>
-             <label className="block text-sm font-medium text-zinc-400 mb-1">Reporting As</label>
-             <div className="w-full bg-dark-800 border border-dark-700 rounded-lg p-2.5 text-zinc-300 text-sm flex justify-between items-center">
-                <span>{currentUser.fullName}</span>
-                <span className={`text-[10px] px-2 py-0.5 rounded border ${ROLE_BADGES[currentUser.role]}`}>{currentUser.role}</span>
-             </div>
-          </div>
-
-          <div className="flex justify-end pt-4 gap-2">
-            <button type="button" onClick={() => setIsCreateModalOpen(false)} className="px-4 py-2 text-sm text-zinc-400 hover:text-white transition-colors">Cancel</button>
-            <button 
-              type="submit" 
-              disabled={isActionLoading}
-              className="bg-brand-500 hover:bg-brand-600 disabled:opacity-50 text-white px-6 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
-            >
-               {isActionLoading && <Loader2 className="animate-spin" size={16} />}
-               Create Log
-            </button>
-          </div>
-        </form>
-      </Modal>
+      <CreateLogModal 
+         isOpen={isCreateModalOpen}
+         onClose={() => setIsCreateModalOpen(false)}
+         onSubmit={handleCreateLog}
+         activeTab={activeTab}
+         currentUser={currentUser}
+         isLoading={isActionLoading}
+      />
 
       {/* CREATE USER MODAL */}
-      <Modal isOpen={isUserModalOpen} onClose={() => setIsUserModalOpen(false)} title="Add New User" size="sm">
-         <form onSubmit={handleCreateUser} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-zinc-400 mb-1">Full Name</label>
-              <input required type="text" className="w-full bg-dark-950 border border-dark-700 rounded-lg p-2.5 text-white text-sm" value={newUserForm.fullName} onChange={e => setNewUserForm({...newUserForm, fullName: e.target.value})} />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-zinc-400 mb-1">Username</label>
-              <input required type="text" className="w-full bg-dark-950 border border-dark-700 rounded-lg p-2.5 text-white text-sm" value={newUserForm.username} onChange={e => setNewUserForm({...newUserForm, username: e.target.value})} />
-            </div>
-            <div>
-               <label className="block text-sm font-medium text-zinc-400 mb-1">Role</label>
-               <select className="w-full bg-dark-950 border border-dark-700 rounded-lg p-2.5 text-white text-sm" value={newUserForm.role} onChange={e => setNewUserForm({...newUserForm, role: e.target.value as Role})}>
-                  <option value={Role.PRODUCTION}>Production</option>
-                  <option value={Role.ENGINEERING}>Engineering</option>
-                  <option value={Role.ADMIN}>Admin</option>
-               </select>
-            </div>
-            <div className="bg-yellow-500/10 border border-yellow-500/20 p-3 rounded-lg">
-               <p className="text-yellow-500 text-xs">Default password will be set to 'password'.</p>
-            </div>
-            <button 
-              type="submit" 
-              disabled={isActionLoading}
-              className="w-full bg-brand-500 hover:bg-brand-600 disabled:opacity-50 text-white py-2 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
-            >
-               {isActionLoading && <Loader2 className="animate-spin" size={16} />}
-               Create User
-            </button>
-         </form>
-      </Modal>
+      <CreateUserModal 
+         isOpen={isUserModalOpen}
+         onClose={() => setIsUserModalOpen(false)}
+         onSubmit={handleCreateUser}
+         isLoading={isActionLoading}
+      />
 
       {/* CHANGE PASSWORD MODAL */}
       <ChangePasswordModal 
