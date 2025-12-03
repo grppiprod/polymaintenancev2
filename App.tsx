@@ -34,7 +34,8 @@ import {
   Download,
   ImageOff,
   ArrowUpDown,
-  MessageCircle
+  MessageCircle,
+  MessageSquare
 } from 'lucide-react';
 import { Role, LogType, LogStatus, Priority, User, MaintenanceLog, HistoryItem } from './types';
 import { MOCK_USERS, PRIORITY_COLORS, ROLE_BADGES } from './constants';
@@ -955,23 +956,24 @@ const App = () => {
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedLogIds, setSelectedLogIds] = useState<Set<string>>(new Set());
 
-  // --- HELPER FOR UNREAD STATUS ---
-  const isLogUnread = (log: MaintenanceLog) => {
-    const lastActivity = getLogLastActivity(log);
+  // --- HELPER FOR NOTIFICATION STATUS ---
+  const getLogNotificationStatus = (log: MaintenanceLog): 'new' | 'updated' | 'read' => {
     const lastViewed = lastViewedLogs[log.id];
+    const lastActivity = getLogLastActivity(log);
 
-    // If never viewed
+    // If never viewed:
     if (!lastViewed) {
-        // If created by me and no history, consider read (I just made it)
-        // Actually, safer to treat "created by me" as read implicitly if I don't have a record,
-        // BUT if I have record, trust the record.
-        // Simplified: If I haven't opened it, it is unread. 
-        // EXCEPTION: If I just created it in this session, I want it read. (Handled in handleCreateLog)
-        return true; 
+        // Simple logic: if I didn't create it (and thus haven't seen it yet), it's new.
+        // If I created it, 'handleCreateLog' sets lastViewed, so it won't be 'new'.
+        return 'new';
     }
 
-    // If activity is newer than last view
-    return new Date(lastActivity).getTime() > new Date(lastViewed).getTime();
+    // If last activity is newer than last view:
+    if (new Date(lastActivity).getTime() > new Date(lastViewed).getTime()) {
+        return 'updated';
+    }
+
+    return 'read';
   };
 
   const markLogAsRead = (logId: string) => {
@@ -991,10 +993,11 @@ const App = () => {
   };
 
   // --- COUNTS FOR BADGES ---
+  // Count total unread (new + updated) for tab badges
   const unreadCounts = {
-      [LogType.REPAIR]: logs.filter(l => l.type === LogType.REPAIR && isLogUnread(l)).length,
-      [LogType.PREVENTIVE_MAINTENANCE]: logs.filter(l => l.type === LogType.PREVENTIVE_MAINTENANCE && isLogUnread(l)).length,
-      active: logs.filter(l => l.type === activeTab && l.status === LogStatus.ACTIVE && isLogUnread(l)).length
+      [LogType.REPAIR]: logs.filter(l => l.type === LogType.REPAIR && getLogNotificationStatus(l) !== 'read').length,
+      [LogType.PREVENTIVE_MAINTENANCE]: logs.filter(l => l.type === LogType.PREVENTIVE_MAINTENANCE && getLogNotificationStatus(l) !== 'read').length,
+      active: logs.filter(l => l.type === activeTab && l.status === LogStatus.ACTIVE && getLogNotificationStatus(l) !== 'read').length
   };
 
 
@@ -1824,7 +1827,7 @@ const App = () => {
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2 md:gap-4 pb-20">
                   {filteredLogs.map(log => {
-                    const unread = isLogUnread(log);
+                    const status = getLogNotificationStatus(log);
                     return (
                     <div 
                       key={log.id} 
@@ -1836,11 +1839,20 @@ const App = () => {
                             : 'border-dark-800 hover:border-brand-500/50'}
                       `}
                     >
-                      {/* UNREAD BADGE */}
-                      {unread && !isSelectionMode && (
+                      {/* NEW BADGE */}
+                      {status === 'new' && !isSelectionMode && (
                           <div className="absolute top-0 right-0 z-10 p-2">
                              <div className="flex items-center gap-1 bg-red-600 text-white text-[10px] font-bold px-2 py-0.5 rounded shadow-lg animate-pulse">
                                  NEW
+                             </div>
+                          </div>
+                      )}
+
+                       {/* UPDATED BADGE */}
+                       {status === 'updated' && !isSelectionMode && (
+                          <div className="absolute top-0 right-0 z-10 p-2">
+                             <div className="flex items-center gap-1 bg-blue-600 text-white text-[10px] font-bold px-2 py-0.5 rounded shadow-lg animate-pulse">
+                                 UPDATED
                              </div>
                           </div>
                       )}
@@ -1871,14 +1883,14 @@ const App = () => {
                       
                       <div className="p-3 md:p-4 flex-1 flex flex-col justify-between min-w-0">
                         <div className="flex justify-between items-start mb-1 md:mb-2 pr-8 md:pr-0">
-                            <h3 className={`font-semibold text-sm md:text-lg text-white line-clamp-1 ${unread ? 'text-white' : 'text-zinc-200'}`}>{log.title}</h3>
+                            <h3 className={`font-semibold text-sm md:text-lg text-white line-clamp-1 ${status !== 'read' ? 'text-white font-bold' : 'text-zinc-300'}`}>{log.title}</h3>
                             {/* Priority Badge - Always next to title */}
                             <span className={`px-1.5 py-0.5 rounded text-[9px] md:text-[10px] font-bold border ${PRIORITY_COLORS[log.priority]} uppercase shrink-0 ml-2`}>
                                 {log.priority === Priority.CRITICAL ? 'CRIT' : log.priority}
                             </span>
                         </div>
                         
-                        <p className={`text-xs md:text-sm line-clamp-2 mb-2 md:mb-4 flex-1 md:flex-none ${unread ? 'text-zinc-300' : 'text-zinc-500'}`}>{log.description}</p>
+                        <p className={`text-xs md:text-sm line-clamp-2 mb-2 md:mb-4 flex-1 md:flex-none ${status !== 'read' ? 'text-zinc-200' : 'text-zinc-500'}`}>{log.description}</p>
                         
                         {/* Unified Footer (Two Lines) */}
                         <div className="mt-auto flex flex-col gap-1 text-[10px] md:text-xs text-zinc-500">
@@ -1886,7 +1898,7 @@ const App = () => {
                                 <Clock size={12} />
                                 <span>{formatDate(log.createdAt)}</span>
                                 {log.history.length > 0 && (
-                                    <span className="flex items-center gap-1 text-zinc-400 ml-2">
+                                    <span className={`flex items-center gap-1 ml-2 ${status !== 'read' ? 'text-zinc-300' : 'text-zinc-500'}`}>
                                         <MessageCircle size={10} />
                                         {log.history.length}
                                     </span>
