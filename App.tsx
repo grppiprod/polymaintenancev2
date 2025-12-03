@@ -33,7 +33,8 @@ import {
   Wifi,
   Download,
   ImageOff,
-  ArrowUpDown
+  ArrowUpDown,
+  MessageCircle
 } from 'lucide-react';
 import { Role, LogType, LogStatus, Priority, User, MaintenanceLog, HistoryItem } from './types';
 import { MOCK_USERS, PRIORITY_COLORS, ROLE_BADGES } from './constants';
@@ -55,6 +56,15 @@ const getRelativeTime = (dateStr: string) => {
   if (days === 0) return 'Today';
   if (days === 1) return 'Yesterday';
   return `${days} days ago`;
+};
+
+// Get the timestamp of the latest activity on a log
+const getLogLastActivity = (log: MaintenanceLog) => {
+    if (log.history && log.history.length > 0) {
+        // Assuming the latest history is at the end because we push new items
+        return log.history[log.history.length - 1].createdAt;
+    }
+    return log.createdAt;
 };
 
 // Priority Weights for Sorting
@@ -885,6 +895,36 @@ const App = () => {
     }
   });
 
+  // Track the last time a log was viewed by the current user
+  // Structure: { [logId: string]: string (ISO Date) }
+  const [lastViewedLogs, setLastViewedLogs] = useState<Record<string, string>>(() => {
+    try {
+      const saved = localStorage.getItem(`polymaintenance_last_viewed_${currentUser?.id || 'guest'}`);
+      return saved ? JSON.parse(saved) : {};
+    } catch (e) {
+      return {};
+    }
+  });
+
+  // Update persistence when currentUser changes to ensure we load correct read receipts
+  useEffect(() => {
+    if (currentUser) {
+        try {
+            const saved = localStorage.getItem(`polymaintenance_last_viewed_${currentUser.id}`);
+            setLastViewedLogs(saved ? JSON.parse(saved) : {});
+        } catch(e) { 
+            setLastViewedLogs({});
+        }
+    }
+  }, [currentUser]);
+
+  // Save to local storage whenever lastViewedLogs changes
+  useEffect(() => {
+    if (currentUser) {
+        localStorage.setItem(`polymaintenance_last_viewed_${currentUser.id}`, JSON.stringify(lastViewedLogs));
+    }
+  }, [lastViewedLogs, currentUser]);
+
   const [activeTab, setActiveTab] = useState<LogType>(LogType.REPAIR);
   const [statusFilter, setStatusFilter] = useState<LogStatus>(LogStatus.ACTIVE);
   const [sortBy, setSortBy] = useState<SortOption>('priority');
@@ -914,6 +954,49 @@ const App = () => {
   // Bulk Delete State (Admin Only)
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedLogIds, setSelectedLogIds] = useState<Set<string>>(new Set());
+
+  // --- HELPER FOR UNREAD STATUS ---
+  const isLogUnread = (log: MaintenanceLog) => {
+    const lastActivity = getLogLastActivity(log);
+    const lastViewed = lastViewedLogs[log.id];
+
+    // If never viewed
+    if (!lastViewed) {
+        // If created by me and no history, consider read (I just made it)
+        // Actually, safer to treat "created by me" as read implicitly if I don't have a record,
+        // BUT if I have record, trust the record.
+        // Simplified: If I haven't opened it, it is unread. 
+        // EXCEPTION: If I just created it in this session, I want it read. (Handled in handleCreateLog)
+        return true; 
+    }
+
+    // If activity is newer than last view
+    return new Date(lastActivity).getTime() > new Date(lastViewed).getTime();
+  };
+
+  const markLogAsRead = (logId: string) => {
+      setLastViewedLogs(prev => ({
+          ...prev,
+          [logId]: new Date().toISOString()
+      }));
+  };
+
+  const handleOpenLogCard = (log: MaintenanceLog) => {
+      if (isSelectionMode) {
+          toggleLogSelection(log.id);
+      } else {
+          setSelectedLog(log);
+          markLogAsRead(log.id);
+      }
+  };
+
+  // --- COUNTS FOR BADGES ---
+  const unreadCounts = {
+      [LogType.REPAIR]: logs.filter(l => l.type === LogType.REPAIR && isLogUnread(l)).length,
+      [LogType.PREVENTIVE_MAINTENANCE]: logs.filter(l => l.type === LogType.PREVENTIVE_MAINTENANCE && isLogUnread(l)).length,
+      active: logs.filter(l => l.type === activeTab && l.status === LogStatus.ACTIVE && isLogUnread(l)).length
+  };
+
 
   // --- AUTH HANDLERS ---
   const handleLogin = (user: User) => {
@@ -1214,6 +1297,7 @@ const App = () => {
       }
     }
 
+    const now = new Date().toISOString();
     const newLog: MaintenanceLog = {
       id: generateId(), 
       title: formData.title,
@@ -1224,7 +1308,7 @@ const App = () => {
       createdBy: currentUser.id,
       creatorName: currentUser.fullName,
       creatorRole: currentUser.role,
-      createdAt: new Date().toISOString(),
+      createdAt: now,
       imageUrl: imageUrl,
       history: []
     };
@@ -1236,6 +1320,9 @@ const App = () => {
       
       // Use functional state update to prevent stale closures
       setLogs(prev => [newLog, ...prev]);
+
+      // Automatically mark as read for the creator
+      setLastViewedLogs(prev => ({ ...prev, [newLog.id]: now }));
       
       setIsCreateModalOpen(false);
       // Form reset handled by child component effect
@@ -1280,6 +1367,9 @@ const App = () => {
         }
         return log;
       }));
+
+      // Mark as read since I just commented
+      markLogAsRead(logId);
       
       if (selectedLog && selectedLog.id === logId) {
         setSelectedLog({ ...selectedLog, history: updatedHistory });
@@ -1327,6 +1417,8 @@ const App = () => {
         }
         return log;
       }));
+
+      markLogAsRead(logId);
       
       if (selectedLog) setSelectedLog(null); // Close modal on close action?
       addToast('Log closed', 'success');
@@ -1665,16 +1757,26 @@ const App = () => {
                 <div className="flex gap-4 md:gap-6 overflow-x-auto w-full md:w-auto">
                   <button 
                     onClick={() => setActiveTab(LogType.REPAIR)}
-                    className={`pb-3 text-xs md:text-sm font-medium transition-colors relative whitespace-nowrap ${activeTab === LogType.REPAIR ? 'text-brand-500' : 'text-zinc-400 hover:text-zinc-200'}`}
+                    className={`pb-3 text-xs md:text-sm font-medium transition-colors relative whitespace-nowrap flex items-center gap-2 ${activeTab === LogType.REPAIR ? 'text-brand-500' : 'text-zinc-400 hover:text-zinc-200'}`}
                   >
                     Repairs
+                    {unreadCounts[LogType.REPAIR] > 0 && (
+                        <span className="bg-red-600 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold animate-pulse">
+                            {unreadCounts[LogType.REPAIR]}
+                        </span>
+                    )}
                     {activeTab === LogType.REPAIR && <span className="absolute bottom-0 left-0 w-full h-0.5 bg-brand-500 rounded-t-full"></span>}
                   </button>
                   <button 
                     onClick={() => setActiveTab(LogType.PREVENTIVE_MAINTENANCE)}
-                    className={`pb-3 text-xs md:text-sm font-medium transition-colors relative whitespace-nowrap ${activeTab === LogType.PREVENTIVE_MAINTENANCE ? 'text-brand-500' : 'text-zinc-400 hover:text-zinc-200'}`}
+                    className={`pb-3 text-xs md:text-sm font-medium transition-colors relative whitespace-nowrap flex items-center gap-2 ${activeTab === LogType.PREVENTIVE_MAINTENANCE ? 'text-brand-500' : 'text-zinc-400 hover:text-zinc-200'}`}
                   >
                     Preventive Maintenance
+                    {unreadCounts[LogType.PREVENTIVE_MAINTENANCE] > 0 && (
+                        <span className="bg-red-600 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold animate-pulse">
+                            {unreadCounts[LogType.PREVENTIVE_MAINTENANCE]}
+                        </span>
+                    )}
                     {activeTab === LogType.PREVENTIVE_MAINTENANCE && <span className="absolute bottom-0 left-0 w-full h-0.5 bg-brand-500 rounded-t-full"></span>}
                   </button>
                 </div>
@@ -1697,9 +1799,12 @@ const App = () => {
                   <div className="flex bg-dark-900 p-1 rounded-lg border border-dark-800 flex-1 md:flex-none">
                       <button 
                         onClick={() => setStatusFilter(LogStatus.ACTIVE)}
-                        className={`flex-1 md:flex-none px-3 py-1 text-xs rounded-md transition-all ${statusFilter === LogStatus.ACTIVE ? 'bg-dark-800 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
+                        className={`flex-1 md:flex-none px-3 py-1 text-xs rounded-md transition-all flex items-center justify-center gap-2 ${statusFilter === LogStatus.ACTIVE ? 'bg-dark-800 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
                       >
                         Active ({logs.filter(l => l.type === activeTab && l.status === LogStatus.ACTIVE).length})
+                        {unreadCounts.active > 0 && (
+                           <span className="w-2 h-2 rounded-full bg-red-500"></span>
+                        )}
                       </button>
                       <button 
                         onClick={() => setStatusFilter(LogStatus.CLOSED)}
@@ -1718,16 +1823,12 @@ const App = () => {
                  </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2 md:gap-4 pb-20">
-                  {filteredLogs.map(log => (
+                  {filteredLogs.map(log => {
+                    const unread = isLogUnread(log);
+                    return (
                     <div 
                       key={log.id} 
-                      onClick={() => {
-                          if (isSelectionMode) {
-                              toggleLogSelection(log.id);
-                          } else {
-                              setSelectedLog(log);
-                          }
-                      }}
+                      onClick={() => handleOpenLogCard(log)}
                       className={`
                         bg-dark-900 border rounded-lg md:rounded-xl p-0 transition-all cursor-pointer group overflow-hidden flex flex-row md:flex-col min-h-[6rem] md:h-full relative items-stretch
                         ${isSelectionMode && selectedLogIds.has(log.id) 
@@ -1735,6 +1836,15 @@ const App = () => {
                             : 'border-dark-800 hover:border-brand-500/50'}
                       `}
                     >
+                      {/* UNREAD BADGE */}
+                      {unread && !isSelectionMode && (
+                          <div className="absolute top-0 right-0 z-10 p-2">
+                             <div className="flex items-center gap-1 bg-red-600 text-white text-[10px] font-bold px-2 py-0.5 rounded shadow-lg animate-pulse">
+                                 NEW
+                             </div>
+                          </div>
+                      )}
+
                       {/* Selection Overlay Checkbox */}
                       {isSelectionMode && (
                           <div className="absolute top-2 right-2 z-10">
@@ -1760,21 +1870,27 @@ const App = () => {
                       </div>
                       
                       <div className="p-3 md:p-4 flex-1 flex flex-col justify-between min-w-0">
-                        <div className="flex justify-between items-start mb-1 md:mb-2">
-                            <h3 className="font-semibold text-sm md:text-lg text-white line-clamp-1">{log.title}</h3>
+                        <div className="flex justify-between items-start mb-1 md:mb-2 pr-8 md:pr-0">
+                            <h3 className={`font-semibold text-sm md:text-lg text-white line-clamp-1 ${unread ? 'text-white' : 'text-zinc-200'}`}>{log.title}</h3>
                             {/* Priority Badge - Always next to title */}
                             <span className={`px-1.5 py-0.5 rounded text-[9px] md:text-[10px] font-bold border ${PRIORITY_COLORS[log.priority]} uppercase shrink-0 ml-2`}>
                                 {log.priority === Priority.CRITICAL ? 'CRIT' : log.priority}
                             </span>
                         </div>
                         
-                        <p className="text-zinc-400 text-xs md:text-sm line-clamp-2 mb-2 md:mb-4 flex-1 md:flex-none">{log.description}</p>
+                        <p className={`text-xs md:text-sm line-clamp-2 mb-2 md:mb-4 flex-1 md:flex-none ${unread ? 'text-zinc-300' : 'text-zinc-500'}`}>{log.description}</p>
                         
                         {/* Unified Footer (Two Lines) */}
                         <div className="mt-auto flex flex-col gap-1 text-[10px] md:text-xs text-zinc-500">
                              <div className="flex items-center gap-1.5">
                                 <Clock size={12} />
                                 <span>{formatDate(log.createdAt)}</span>
+                                {log.history.length > 0 && (
+                                    <span className="flex items-center gap-1 text-zinc-400 ml-2">
+                                        <MessageCircle size={10} />
+                                        {log.history.length}
+                                    </span>
+                                )}
                              </div>
                              <div className="flex items-center gap-1.5">
                                 <span className="text-zinc-400">by {log.creatorName}</span>
@@ -1785,7 +1901,7 @@ const App = () => {
                         </div>
                       </div>
                     </div>
-                  ))}
+                  );})}
                 </div>
               )}
 
