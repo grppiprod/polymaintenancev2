@@ -24,14 +24,11 @@ self.addEventListener('push', (event) => {
     body: message,
     icon: icon,
     badge: icon, // Small icon for android status bar
-    vibrate: [200, 100, 200],
     data: {
       url: self.location.origin,
       logId: logId
-    },
-    actions: [
-      { action: 'view', title: 'View Log' }
-    ]
+    }
+    // Removed 'actions' to improve compatibility with strict PWA parsers on iOS
   };
 
   event.waitUntil(

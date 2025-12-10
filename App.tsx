@@ -35,7 +35,8 @@ import {
   ImageOff,
   ArrowUpDown,
   MessageCircle,
-  MessageSquare
+  MessageSquare,
+  Siren
 } from 'lucide-react';
 import { Role, LogType, LogStatus, Priority, User, MaintenanceLog, HistoryItem } from './types';
 import { MOCK_USERS, PRIORITY_COLORS, ROLE_BADGES } from './constants';
@@ -66,33 +67,6 @@ const getLogLastActivity = (log: MaintenanceLog) => {
         return log.history[log.history.length - 1].createdAt;
     }
     return log.createdAt;
-};
-
-// Play a simple notification beep
-const playNotificationSound = () => {
-  try {
-    const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
-    if (!AudioContext) return;
-    
-    const ctx = new AudioContext();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(880, ctx.currentTime); // A5
-    osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.1); // Drop to A4
-    
-    gain.gain.setValueAtTime(0.1, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
-
-    osc.start();
-    osc.stop(ctx.currentTime + 0.1);
-  } catch (e) {
-    console.error("Audio play failed", e);
-  }
 };
 
 // Priority Weights for Sorting
@@ -196,20 +170,6 @@ const mapLogToDB = (l: MaintenanceLog) => ({
   closed_at: l.closedAt,
   history: l.history // Storing JSON directly
 });
-
-// Helper for VAPID key conversion (used if you connect a backend later)
-function urlBase64ToUint8Array(base64String: string) {
-  const padding = '='.repeat((4 - base64String.length % 4) % 4);
-  const base64 = (base64String + padding)
-    .replace(/\-/g, '+')
-    .replace(/_/g, '/');
-  const rawData = window.atob(base64);
-  const outputArray = new Uint8Array(rawData.length);
-  for (let i = 0; i < rawData.length; ++i) {
-    outputArray[i] = rawData.charCodeAt(i);
-  }
-  return outputArray;
-}
 
 interface ToastMessage {
   id: string;
@@ -949,6 +909,9 @@ const App = () => {
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default');
   const channelRef = useRef<any>(null);
 
+  // Audio Context Ref for Mobile Unlock
+  const audioContextRef = useRef<AudioContext | null>(null);
+
   // UI State
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [view, setView] = useState<'dashboard' | 'users'>('dashboard');
@@ -965,6 +928,70 @@ const App = () => {
   // Bulk Delete State (Admin Only)
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedLogIds, setSelectedLogIds] = useState<Set<string>>(new Set());
+
+  // --- AUDIO UNLOCKER FOR MOBILE ---
+  useEffect(() => {
+    const unlockAudio = () => {
+      if (!audioContextRef.current) {
+        try {
+            const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+            if (AudioContext) {
+                audioContextRef.current = new AudioContext();
+                // Play silent sound to unlock
+                const buffer = audioContextRef.current.createBuffer(1, 1, 22050);
+                const source = audioContextRef.current.createBufferSource();
+                source.buffer = buffer;
+                source.connect(audioContextRef.current.destination);
+                source.start(0);
+                // console.log("Audio unlocked");
+            }
+        } catch(e) {
+            console.error("Audio unlock failed", e);
+        }
+      } else if (audioContextRef.current.state === 'suspended') {
+          audioContextRef.current.resume();
+      }
+      
+      // Remove listener after first interaction
+      window.removeEventListener('click', unlockAudio);
+      window.removeEventListener('touchstart', unlockAudio);
+    };
+
+    window.addEventListener('click', unlockAudio);
+    window.addEventListener('touchstart', unlockAudio);
+
+    return () => {
+        window.removeEventListener('click', unlockAudio);
+        window.removeEventListener('touchstart', unlockAudio);
+    };
+  }, []);
+
+  const playNotificationSound = () => {
+    try {
+       // Use persisted context if available (better for mobile)
+       const ctx = audioContextRef.current || new (window.AudioContext || (window as any).webkitAudioContext)();
+       if (ctx.state === 'suspended') ctx.resume();
+
+       const osc = ctx.createOscillator();
+       const gain = ctx.createGain();
+
+       osc.connect(gain);
+       gain.connect(ctx.destination);
+
+       osc.type = 'sine';
+       osc.frequency.setValueAtTime(880, ctx.currentTime); 
+       osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.1); 
+       
+       gain.gain.setValueAtTime(0.1, ctx.currentTime);
+       gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
+
+       osc.start();
+       osc.stop(ctx.currentTime + 0.1);
+    } catch (e) {
+      console.error("Audio play failed", e);
+    }
+  };
+
 
   // --- HELPER FOR NOTIFICATION STATUS ---
   const getLogNotificationStatus = (log: MaintenanceLog): 'new' | 'updated' | 'read' => {
@@ -1086,27 +1113,6 @@ const App = () => {
     };
   }, [logs]); // Re-bind when logs update to ensure we can find the target
 
-  const subscribeToPush = async () => {
-    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-        return;
-    }
-
-    try {
-        const registration = await navigator.serviceWorker.ready;
-        // Check if already subscribed
-        const existingSubscription = await registration.pushManager.getSubscription();
-        if (existingSubscription) {
-            console.log("Already subscribed to push:", existingSubscription);
-            // Optionally update database with current subscription to ensure it's fresh
-            return;
-        }
-       console.log("Push subscription logic ready (requires VAPID key)");
-
-    } catch (e) {
-        console.error("Failed to subscribe to push", e);
-    }
-  };
-
   const requestNotificationPermission = async () => {
     // Check for Secure Context (Required for SW and Notifications)
     if (!window.isSecureContext) {
@@ -1120,12 +1126,12 @@ const App = () => {
      const isStandalone = window.matchMedia('(display-mode: standalone)').matches || (navigator as any).standalone;
  
      if (isIOS && !isStandalone) {
-        alert("To enable notifications on iOS, you must add this app to your Home Screen.\n\n1. Tap the Share button\n2. Select 'Add to Home Screen'\n3. Open the app from there");
+        alert("Enable Notifications on iOS:\n\n1. Tap the Share button below\n2. Select 'Add to Home Screen'\n3. Open the app from the new Home Screen icon\n4. Then come back here to enable notifications.");
         return;
      }
  
      if (!('Notification' in window)) {
-         alert("This browser does not support system notifications. Please try Google Chrome on Android or Safari/Chrome on iOS (after adding to Home Screen).");
+         alert("This browser does not support system notifications.");
          return;
      }
 
@@ -1136,16 +1142,21 @@ const App = () => {
       if (permission === 'granted') {
         addToast("Notifications enabled!", 'success');
         showSystemNotification("Notifications Enabled", "You will now receive alerts for new logs.", null);
-        
-        // Attempt to subscribe to Web Push (requires backend setup to fully function)
-        subscribeToPush();
       } else if (permission === 'denied') {
-        alert("Notifications are blocked. Please enable them in your browser settings.");
+        alert("Notifications are blocked. Please enable them in your browser settings (Settings -> Site Settings -> Notifications).");
       }
     } catch (e) {
       console.error("Error requesting permission", e);
       alert("Error requesting notification permission.");
     }
+  };
+
+  const handleTestNotification = async () => {
+      if (Notification.permission === 'granted') {
+          await showSystemNotification("Test Notification", "If you see this, notifications are working!", null);
+      } else {
+          alert("Please enable notifications first.");
+      }
   };
 
   const showSystemNotification = async (title: string, body: string, logId: string | null = null) => {
@@ -1155,18 +1166,16 @@ const App = () => {
               // Try to use Service Worker for notification (Better mobile support)
               if ('serviceWorker' in navigator) {
                   const registration = await navigator.serviceWorker.ready;
+                  // Use simple options for maximum compatibility
                   registration.showNotification(title, {
                       body: body,
                       icon: "https://aistudiocdn.com/lucide-react/wrench.png",
                       badge: "https://aistudiocdn.com/lucide-react/wrench.png", // Small icon for android status bar
-                      vibrate: [200, 100, 200],
+                      tag: logId || 'general', // Prevent duplicate notifications stacking
                       data: {
                           logId: logId,
                           url: window.location.origin
-                      },
-                      actions: [
-                        { action: 'view', title: 'View Log' }
-                      ]
+                      }
                   } as any);
               } else {
                   // Fallback
@@ -1754,19 +1763,31 @@ const App = () => {
             <Lock size={20} /> Change Password
           </button>
 
-          {/* NOTIFICATION ENABLE BUTTON */}
-          {notificationPermission !== 'granted' ? (
-            <button 
-              onClick={requestNotificationPermission}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors text-zinc-400 hover:bg-dark-800 hover:text-white`}
-            >
-              <BellRing size={20} /> Enable Notifications
-            </button>
-          ) : (
-            <div className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-emerald-500 bg-emerald-500/10 border border-emerald-500/20">
-                <Wifi size={20} /> Notifications Active
-            </div>
-          )}
+          {/* NOTIFICATION SECTION */}
+          <div className="mt-4 pt-4 border-t border-dark-800">
+              <p className="px-4 text-xs font-semibold text-zinc-500 uppercase mb-2">Notifications</p>
+              
+              {notificationPermission !== 'granted' ? (
+                <button 
+                  onClick={requestNotificationPermission}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors text-zinc-400 hover:bg-dark-800 hover:text-white`}
+                >
+                  <BellRing size={20} /> Enable Notifications
+                </button>
+              ) : (
+                <>
+                <div className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-emerald-500 bg-emerald-500/10 border border-emerald-500/20">
+                    <Wifi size={20} /> Active
+                </div>
+                 <button 
+                  onClick={handleTestNotification}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors text-zinc-400 hover:bg-dark-800 hover:text-white mt-1`}
+                >
+                  <Siren size={20} /> Test Notification
+                </button>
+                </>
+              )}
+          </div>
 
         </nav>
 
