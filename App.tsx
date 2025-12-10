@@ -68,6 +68,33 @@ const getLogLastActivity = (log: MaintenanceLog) => {
     return log.createdAt;
 };
 
+// Play a simple notification beep
+const playNotificationSound = () => {
+  try {
+    const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContext) return;
+    
+    const ctx = new AudioContext();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(880, ctx.currentTime); // A5
+    osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.1); // Drop to A4
+    
+    gain.gain.setValueAtTime(0.1, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
+
+    osc.start();
+    osc.stop(ctx.currentTime + 0.1);
+  } catch (e) {
+    console.error("Audio play failed", e);
+  }
+};
+
 // Priority Weights for Sorting
 const PRIORITY_WEIGHTS = {
   [Priority.CRITICAL]: 4,
@@ -224,7 +251,15 @@ create table if not exists logs (
   created_at timestamptz not null,
   closed_at timestamptz,
   history jsonb default '[]'::jsonb
-);`;
+);
+
+create table if not exists user_log_views (
+  user_id text not null,
+  log_id text not null,
+  last_viewed_at timestamptz not null,
+  primary key (user_id, log_id)
+);
+`;
 
   const handleCopy = () => {
     navigator.clipboard.writeText(sqlSetup);
@@ -898,33 +933,8 @@ const App = () => {
 
   // Track the last time a log was viewed by the current user
   // Structure: { [logId: string]: string (ISO Date) }
-  const [lastViewedLogs, setLastViewedLogs] = useState<Record<string, string>>(() => {
-    try {
-      const saved = localStorage.getItem(`polymaintenance_last_viewed_${currentUser?.id || 'guest'}`);
-      return saved ? JSON.parse(saved) : {};
-    } catch (e) {
-      return {};
-    }
-  });
-
-  // Update persistence when currentUser changes to ensure we load correct read receipts
-  useEffect(() => {
-    if (currentUser) {
-        try {
-            const saved = localStorage.getItem(`polymaintenance_last_viewed_${currentUser.id}`);
-            setLastViewedLogs(saved ? JSON.parse(saved) : {});
-        } catch(e) { 
-            setLastViewedLogs({});
-        }
-    }
-  }, [currentUser]);
-
-  // Save to local storage whenever lastViewedLogs changes
-  useEffect(() => {
-    if (currentUser) {
-        localStorage.setItem(`polymaintenance_last_viewed_${currentUser.id}`, JSON.stringify(lastViewedLogs));
-    }
-  }, [lastViewedLogs, currentUser]);
+  // Changed from local storage to empty init, wil load from DB
+  const [lastViewedLogs, setLastViewedLogs] = useState<Record<string, string>>({});
 
   const [activeTab, setActiveTab] = useState<LogType>(LogType.REPAIR);
   const [statusFilter, setStatusFilter] = useState<LogStatus>(LogStatus.ACTIVE);
@@ -976,11 +986,26 @@ const App = () => {
     return 'read';
   };
 
-  const markLogAsRead = (logId: string) => {
+  const markLogAsRead = async (logId: string) => {
+      const now = new Date().toISOString();
+      
+      // Optimistic update
       setLastViewedLogs(prev => ({
           ...prev,
-          [logId]: new Date().toISOString()
+          [logId]: now
       }));
+
+      if (!currentUser) return;
+
+      try {
+          await supabase.from('user_log_views').upsert({
+              user_id: currentUser.id,
+              log_id: logId,
+              last_viewed_at: now
+          });
+      } catch (e) {
+          console.error("Failed to sync read receipt", e);
+      }
   };
 
   const handleOpenLogCard = (log: MaintenanceLog) => {
@@ -1010,6 +1035,7 @@ const App = () => {
   const handleLogout = () => {
     setCurrentUser(null);
     localStorage.removeItem('polymaintenance_user');
+    setLastViewedLogs({});
   };
 
   const addToast = (message: string, type: 'info' | 'success' | 'error' = 'info') => {
@@ -1030,6 +1056,35 @@ const App = () => {
   useEffect(() => {
     checkNotificationPermission();
   }, []);
+
+  // Listen for Service Worker Messages (Open Log from Notification)
+  useEffect(() => {
+    const handleServiceWorkerMessage = (event: MessageEvent) => {
+      if (event.data && event.data.type === 'OPEN_LOG' && event.data.logId) {
+        // Find the log in current state
+        const targetLog = logs.find(l => l.id === event.data.logId);
+        if (targetLog) {
+          setSelectedLog(targetLog);
+          markLogAsRead(targetLog.id);
+        } else {
+          // If logs aren't loaded or it's new, we might need to fetch it (or wait for realtime)
+          // For now, let's just refresh to be safe
+          refreshLogs();
+          // We can't easily open it if it's not in the list yet, but the Realtime listener should have added it.
+        }
+      }
+    };
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('message', handleServiceWorkerMessage);
+    }
+
+    return () => {
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.removeEventListener('message', handleServiceWorkerMessage);
+      }
+    };
+  }, [logs]); // Re-bind when logs update to ensure we can find the target
 
   const subscribeToPush = async () => {
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
@@ -1080,7 +1135,7 @@ const App = () => {
       
       if (permission === 'granted') {
         addToast("Notifications enabled!", 'success');
-        showSystemNotification("Notifications Enabled", "You will now receive alerts for new logs.");
+        showSystemNotification("Notifications Enabled", "You will now receive alerts for new logs.", null);
         
         // Attempt to subscribe to Web Push (requires backend setup to fully function)
         subscribeToPush();
@@ -1093,8 +1148,9 @@ const App = () => {
     }
   };
 
-  const showSystemNotification = async (title: string, body: string) => {
+  const showSystemNotification = async (title: string, body: string, logId: string | null = null) => {
       if (Notification.permission === 'granted') {
+          playNotificationSound();
           try {
               // Try to use Service Worker for notification (Better mobile support)
               if ('serviceWorker' in navigator) {
@@ -1103,7 +1159,14 @@ const App = () => {
                       body: body,
                       icon: "https://aistudiocdn.com/lucide-react/wrench.png",
                       badge: "https://aistudiocdn.com/lucide-react/wrench.png", // Small icon for android status bar
-                      vibrate: [200, 100, 200]
+                      vibrate: [200, 100, 200],
+                      data: {
+                          logId: logId,
+                          url: window.location.origin
+                      },
+                      actions: [
+                        { action: 'view', title: 'View Log' }
+                      ]
                   } as any);
               } else {
                   // Fallback
@@ -1194,7 +1257,21 @@ const App = () => {
 
   // Hybrid Realtime Subscription (DB Changes + Broadcasts)
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser) {
+        setLastViewedLogs({});
+        return;
+    }
+
+    // Fetch Receipts on Load
+    const fetchReceipts = async () => {
+         const { data } = await supabase.from('user_log_views').select('log_id, last_viewed_at').eq('user_id', currentUser.id);
+         if (data) {
+             const map: Record<string, string> = {};
+             data.forEach((item: any) => map[item.log_id] = item.last_viewed_at);
+             setLastViewedLogs(map);
+         }
+    };
+    fetchReceipts();
 
     // Use a unique channel for app-wide events
     const channel = supabase.channel('polymaintenance_global');
@@ -1211,25 +1288,21 @@ const App = () => {
               });
               if (newLog.createdBy !== currentUser.id) {
                   addToast(`New Log: ${newLog.title} by ${newLog.creatorName}`, 'info');
-                  showSystemNotification("New Maintenance Log", `${newLog.title} by ${newLog.creatorName}`);
+                  // Trigger Notification for New Logs via DB event (Robust backup to broadcast)
+                  showSystemNotification("New Maintenance Log", `${newLog.title} by ${newLog.creatorName}`, newLog.id);
               }
           } else if (payload.eventType === 'UPDATE') {
               const updatedLog = mapLogFromDB(payload.new);
               setLogs(prev => prev.map(l => l.id === updatedLog.id ? updatedLog : l));
-              
-              // Only notify if we haven't already seen a broadcast for this
-              const lastHistory = updatedLog.history[updatedLog.history.length - 1];
-              if (lastHistory && lastHistory.createdBy !== currentUser.id) {
-                  // Check if this history item is recent (created within last 10 seconds)
-                  // This acts as a robust fallback to broadcast
-                  const diff = new Date().getTime() - new Date(lastHistory.createdAt).getTime();
-                  if (diff < 10000) {
-                       // Only show notification here if you want to double down on reliability over duplication risks
-                       // showSystemNotification(`Update on ${updatedLog.title}`, lastHistory.content);
-                  }
-              }
           } else if (payload.eventType === 'DELETE') {
               setLogs(prev => prev.filter(l => l.id !== payload.old.id));
+          }
+      })
+      // Listen to READ RECEIPT changes for cross-device sync
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'user_log_views', filter: `user_id=eq.${currentUser.id}` }, (payload) => {
+          if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+              const { log_id, last_viewed_at } = payload.new;
+              setLastViewedLogs(prev => ({ ...prev, [log_id]: last_viewed_at }));
           }
       })
       // Listen to USERS table changes for admin dashboard live updates
@@ -1249,10 +1322,10 @@ const App = () => {
       })
       .on('broadcast', { event: 'app_notification' }, ({ payload }) => {
           // Handle explicit broadcast from other clients
-          // Payload: { message, userId, type }
+          // Payload: { message, userId, type, logId }
           if (payload.userId !== currentUser.id) {
               addToast(payload.message, payload.type || 'info');
-              showSystemNotification("PolyMaintenance Update", payload.message);
+              showSystemNotification("PolyMaintenance Update", payload.message, payload.logId || null);
               refreshLogs(); // Silent refresh to ensure data consistency
           }
       })
@@ -1272,12 +1345,12 @@ const App = () => {
 
   // --- HANDLERS ---
 
-  const sendBroadcast = (message: string, type: 'info' | 'success' | 'error' = 'info') => {
+  const sendBroadcast = (message: string, type: 'info' | 'success' | 'error' = 'info', logId: string | null = null) => {
       if (channelRef.current) {
           channelRef.current.send({
               type: 'broadcast',
               event: 'app_notification',
-              payload: { message, userId: currentUser?.id, type }
+              payload: { message, userId: currentUser?.id, type, logId }
           });
       }
   };
@@ -1324,7 +1397,14 @@ const App = () => {
       // Use functional state update to prevent stale closures
       setLogs(prev => [newLog, ...prev]);
 
-      // Automatically mark as read for the creator
+      // Automatically mark as read for the creator on server
+      await supabase.from('user_log_views').upsert({
+          user_id: currentUser.id,
+          log_id: newLog.id,
+          last_viewed_at: now
+      });
+
+      // Update local state (optimistic)
       setLastViewedLogs(prev => ({ ...prev, [newLog.id]: now }));
       
       setIsCreateModalOpen(false);
@@ -1332,7 +1412,7 @@ const App = () => {
       addToast('Log created successfully', 'success');
       
       // Notify others
-      sendBroadcast(`New Log: ${newLog.title} by ${currentUser.fullName}`);
+      sendBroadcast(`New Log: ${newLog.title} by ${currentUser.fullName}`, 'info', newLog.id);
 
     } catch (error: any) {
       console.error("Error creating log:", error);
@@ -1380,7 +1460,7 @@ const App = () => {
       addToast('Note added', 'success');
       
       // Notify others
-      sendBroadcast(`Update on "${currentLog.title}": ${content}`);
+      sendBroadcast(`Update on "${currentLog.title}": ${content}`, 'info', logId);
 
     } catch (error: any) {
       alert("Failed to update history: " + (error.message || JSON.stringify(error)));
@@ -1427,7 +1507,7 @@ const App = () => {
       addToast('Log closed', 'success');
       
       // Notify others
-      sendBroadcast(`Log "${currentLog.title}" marked as CLOSED by ${currentUser.fullName}`);
+      sendBroadcast(`Log "${currentLog.title}" marked as CLOSED by ${currentUser.fullName}`, 'success', logId);
 
     } catch (error: any) {
       alert("Failed to close log: " + (error.message || JSON.stringify(error)));
@@ -1446,7 +1526,7 @@ const App = () => {
        }
        addToast('Log deleted', 'success');
        // Notify others (optional for delete, maybe distracting, but good for consistency)
-       sendBroadcast(`A log was deleted by ${currentUser?.fullName}`);
+       sendBroadcast(`A log was deleted by ${currentUser?.fullName}`, 'error', null);
      } catch (error: any) {
        alert("Failed to delete log: " + (error.message || JSON.stringify(error)));
      }
@@ -1469,7 +1549,7 @@ const App = () => {
         setSelectedLogIds(new Set());
         setIsSelectionMode(false); // Exit selection mode
         addToast(`${idsToDelete.length} logs deleted`, 'success');
-        sendBroadcast(`${idsToDelete.length} logs were deleted by Admin`);
+        sendBroadcast(`${idsToDelete.length} logs were deleted by Admin`, 'error', null);
     } catch (error: any) {
         alert("Failed to delete logs: " + (error.message || JSON.stringify(error)));
     } finally {
