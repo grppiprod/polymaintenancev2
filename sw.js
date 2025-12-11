@@ -10,6 +10,7 @@ self.addEventListener('activate', (event) => {
 
 // Handle incoming Push messages (from Server if configured, or local testing)
 self.addEventListener('push', (event) => {
+  // Check permission inside worker
   if (!(self.Notification && self.Notification.permission === 'granted')) {
     return;
   }
@@ -28,7 +29,6 @@ self.addEventListener('push', (event) => {
       url: self.location.origin,
       logId: logId
     }
-    // Removed 'actions' to improve compatibility with strict PWA parsers on iOS
   };
 
   event.waitUntil(
