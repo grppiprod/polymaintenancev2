@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   LayoutDashboard, 
   Users, 
@@ -18,19 +18,14 @@ import {
   Menu,
   Loader2,
   Database,
-  Terminal,
   Copy,
   RefreshCw,
   Lock,
   CheckSquare,
   Info,
-  BellRing,
-  Wifi,
   ImageOff,
   ArrowUpDown,
   MessageCircle,
-  Siren,
-  Zap,
   Activity
 } from 'lucide-react';
 import { Role, LogType, LogStatus, Priority, User, MaintenanceLog, HistoryItem } from './types';
@@ -45,13 +40,6 @@ const formatDate = (dateStr: string) => {
   return new Date(dateStr).toLocaleString('en-US', {
     month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit'
   });
-};
-
-const getLogLastActivity = (log: MaintenanceLog) => {
-    if (log.history && log.history.length > 0) {
-        return log.history[log.history.length - 1].createdAt;
-    }
-    return log.createdAt;
 };
 
 const PRIORITY_WEIGHTS = {
@@ -111,17 +99,6 @@ interface ToastMessage { id: string; message: string; type: 'info' | 'success' |
 type SortOption = 'priority' | 'date_newest' | 'date_oldest';
 
 // --- COMPONENTS ---
-
-const SkeletonLogCard = () => (
-    <div className="bg-dark-900 border border-dark-800 rounded-lg md:rounded-xl overflow-hidden flex flex-row md:flex-col min-h-[6rem] md:h-full relative items-stretch animate-pulse">
-        <div className="w-20 md:w-full h-auto md:h-40 shrink-0 bg-dark-800"></div>
-        <div className="p-3 md:p-4 flex-1 flex flex-col justify-between min-w-0 space-y-3">
-            <div className="flex justify-between items-start"><div className="h-4 bg-dark-800 rounded w-3/4"></div><div className="h-4 bg-dark-800 rounded w-10"></div></div>
-            <div className="space-y-2"><div className="h-3 bg-dark-800 rounded w-full"></div><div className="h-3 bg-dark-800 rounded w-5/6"></div></div>
-            <div className="mt-auto pt-2 space-y-2"><div className="h-2 bg-dark-800 rounded w-1/3"></div><div className="h-2 bg-dark-800 rounded w-1/2"></div></div>
-        </div>
-    </div>
-);
 
 const DatabaseErrorScreen = ({ error, onRetry }: { error: any, onRetry: () => void }) => {
   const [copied, setCopied] = useState(false);
@@ -293,14 +270,7 @@ const App = () => {
   const [loading, setLoading] = useState(true);
   const [dbConnectionError, setDbConnectionError] = useState<any>(null);
   
-  // Realtime & Notifications
-  const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
-  const logsRef = useRef<MaintenanceLog[]>([]);
-  useEffect(() => { logsRef.current = logs; }, [logs]);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
-  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default');
-  const channelRef = useRef<any>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
 
   // UI State
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -313,25 +283,10 @@ const App = () => {
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [selectedLogIds, setSelectedLogIds] = useState<Set<string>>(new Set());
 
-  // --- AUDIO UNLOCKER ---
-  useEffect(() => {
-    const unlockAudio = () => {
-      if (!audioContextRef.current) {
-        try { const AudioContext = window.AudioContext || (window as any).webkitAudioContext; if (AudioContext) { audioContextRef.current = new AudioContext(); const buffer = audioContextRef.current.createBuffer(1, 1, 22050); const source = audioContextRef.current.createBufferSource(); source.buffer = buffer; source.connect(audioContextRef.current.destination); source.start(0); } } catch(e) {}
-      } else if (audioContextRef.current.state === 'suspended') { audioContextRef.current.resume(); }
-      window.removeEventListener('click', unlockAudio); window.removeEventListener('touchstart', unlockAudio);
-    };
-    window.addEventListener('click', unlockAudio); window.addEventListener('touchstart', unlockAudio);
-    return () => { window.removeEventListener('click', unlockAudio); window.removeEventListener('touchstart', unlockAudio); };
-  }, []);
-
-  const playNotificationSound = () => {
-    try { const ctx = audioContextRef.current || new (window.AudioContext || (window as any).webkitAudioContext)(); if (ctx.state === 'suspended') ctx.resume(); const osc = ctx.createOscillator(); const gain = ctx.createGain(); osc.connect(gain); gain.connect(ctx.destination); osc.type = 'sine'; osc.frequency.setValueAtTime(880, ctx.currentTime); osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.1); gain.gain.setValueAtTime(0.1, ctx.currentTime); gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1); osc.start(); osc.stop(ctx.currentTime + 0.1); } catch (e) { console.error("Audio play failed", e); }
-  };
-
   const getLogNotificationStatus = (log: MaintenanceLog): 'new' | 'updated' | 'read' => {
-    const lastViewed = lastViewedLogs[log.id]; const lastActivity = getLogLastActivity(log);
-    if (!lastViewed) return 'new'; if (new Date(lastActivity).getTime() > new Date(lastViewed).getTime()) return 'updated'; return 'read';
+    const lastViewed = lastViewedLogs[log.id]; 
+    if (!lastViewed) return 'new'; 
+    return 'read';
   };
 
   const markLogAsRead = async (logId: string) => {
@@ -343,110 +298,27 @@ const App = () => {
   const handleLogin = (user: User) => { setCurrentUser(user); localStorage.setItem('polymaintenance_user', JSON.stringify(user)); };
   const handleLogout = () => { setCurrentUser(null); localStorage.removeItem('polymaintenance_user'); setLastViewedLogs({}); };
   const addToast = (message: string, type: 'info' | 'success' | 'error' = 'info') => { const id = Math.random().toString(36).substr(2, 9); setToasts(prev => [...prev, { id, message, type }]); setTimeout(() => { setToasts(prev => prev.filter(t => t.id !== id)); }, 5000); };
-  useEffect(() => { if ('Notification' in window) setNotificationPermission(Notification.permission); }, []);
-
-  // Service Worker Message Listener
-  useEffect(() => {
-    const handleServiceWorkerMessage = (event: MessageEvent) => {
-      if (event.data && event.data.type === 'OPEN_LOG' && event.data.logId) {
-        const targetLog = logs.find(l => l.id === event.data.logId); if (targetLog) { setSelectedLog(targetLog); markLogAsRead(targetLog.id); } else { refreshLogs(); }
-      }
-    };
-    if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message', handleServiceWorkerMessage);
-    return () => { if ('serviceWorker' in navigator) navigator.serviceWorker.removeEventListener('message', handleServiceWorkerMessage); };
-  }, [logs]);
-
-  const requestNotificationPermission = async () => {
-     if (!window.isSecureContext && window.location.hostname !== 'localhost') { alert("System notifications require HTTPS."); return; }
-     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
-     const isStandalone = window.matchMedia('(display-mode: standalone)').matches || (navigator as any).standalone;
-     // iOS Check: Warn but allow trying
-     if (isIOS && !isStandalone) { alert("NOTE FOR iOS:\nNotifications work best when added to Home Screen.\n1. Tap Share\n2. Add to Home Screen\n3. Enable notifications in the installed app.\n\nProceeding with browser check..."); }
-     
-     if (!('Notification' in window)) { alert("This browser does not support system notifications."); return; }
-     
-    try {
-      const permission = await Notification.requestPermission();
-      setNotificationPermission(permission);
-      if (permission === 'granted') {
-        addToast("Notifications enabled!", 'success');
-        showSystemNotification("Notifications Enabled", "You will now receive alerts for new logs.", null);
-      } else {
-        alert("Permission was " + permission + ". Please check your browser settings.");
-      }
-    } catch (e) { alert("Error requesting notification permission: " + e); }
-  };
-
-  const handleTestNotification = async () => {
-      if (Notification.permission === 'granted') { await showSystemNotification("Test Notification", "If you see this, notifications are working!", null); } 
-      else { alert("Permission is " + Notification.permission + ". Please enable notifications first."); }
-  };
-
-  const handleSimulateRemoteEvent = async () => {
-     if (Notification.permission !== 'granted') { alert("Enable notifications first."); return; }
-     addToast("Simulating remote event...", "info");
-     showSystemNotification("Simulated: New Update", "A remote user added a note.", null);
-  };
-
-  // ROBUST NOTIFICATION SHOW LOGIC
-  const showSystemNotification = async (title: string, body: string, logId: string | null = null) => {
-      if (Notification.permission === 'granted') {
-          playNotificationSound();
-          const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
-          const options: any = {
-            body: body,
-            icon: "https://aistudiocdn.com/lucide-react/wrench.png",
-            tag: logId || 'general',
-            data: { logId: logId, url: window.location.origin }
-          };
-          if (!isIOS) { options.badge = "https://aistudiocdn.com/lucide-react/wrench.png"; options.vibrate = [200, 100, 200]; }
-
-          // Try Service Worker First (Required for proper iOS PWA "Push" behavior)
-          if ('serviceWorker' in navigator) {
-             try {
-                const registration = await navigator.serviceWorker.ready.catch(() => null); // Fallback if stuck
-                if (registration && registration.active) {
-                    await registration.showNotification(title, options);
-                    return; // Success
-                }
-             } catch (e) {
-                console.warn("SW Notification failed, trying fallback:", e);
-             }
-          }
-
-          // Fallback to standard API (Works on Desktop, Android Chrome, and some iOS contexts)
-          try { new Notification(title, options); } catch(e2) { console.error("Standard Notification failed:", e2); }
-      }
-  };
-
-  const refreshLogs = async () => {
-    try {
-      const { data: logData } = await supabase.from('logs').select('*');
-      if (logData) {
-          const mappedLogs = logData.map(mapLogFromDB);
-          mappedLogs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-          setLogs(mappedLogs);
-      }
-    } catch (e) { console.error("Silent refresh failed", e); }
-  };
-
+  
   const fetchData = async () => {
     setLoading(true); setDbConnectionError(null);
     try {
-      const [userRes, logRes] = await Promise.all([ supabase.from('users').select('*'), supabase.from('logs').select('*') ]);
-      if (userRes.error) throw userRes.error;
-      const mappedUsers = (userRes.data || []).map(mapUserFromDB);
+      const { data: userData, error: userError } = await supabase.from('users').select('*');
+      if (userError) throw userError;
+      const mappedUsers = (userData || []).map(mapUserFromDB);
       setUsers(mappedUsers);
+      
       if (mappedUsers.length === 0) { const defaultAdmin = MOCK_USERS[0]; await supabase.from('users').insert([mapUserToDB(defaultAdmin)]); setUsers([defaultAdmin]); }
-      if (logRes.error) throw logRes.error;
-      const mappedLogs = (logRes.data || []).map(mapLogFromDB);
+      
+      const { data: logData, error: logError } = await supabase.from('logs').select('*');
+      if (logError) throw logError;
+      const mappedLogs = (logData || []).map(mapLogFromDB);
       setLogs(mappedLogs);
     } catch (error: any) { console.error("Error fetching data:", error); setDbConnectionError(error); } finally { setLoading(false); }
   };
 
   useEffect(() => { fetchData(); }, []);
 
-  // Realtime Logic
+  // Realtime Logic (Simplified)
   useEffect(() => {
     if (!currentUser) return;
     supabase.from('user_log_views').select('log_id, last_viewed_at').eq('user_id', currentUser.id).then(({data}) => { if (data) { const map: Record<string, string> = {}; data.forEach((item: any) => map[item.log_id] = item.last_viewed_at); setLastViewedLogs(map); }});
@@ -457,26 +329,9 @@ const App = () => {
           if (payload.eventType === 'INSERT') {
               const newLog = mapLogFromDB(payload.new);
               setLogs(prev => { if (prev.some(l => l.id === newLog.id)) return prev; return [newLog, ...prev]; });
-              if (newLog.createdBy !== currentUser.id) {
-                  addToast(`New Log: ${newLog.title}`, 'info');
-                  showSystemNotification("New Maintenance Log", `${newLog.title} by ${newLog.creatorName}`, newLog.id);
-              }
+              if (newLog.createdBy !== currentUser.id) addToast(`New Log: ${newLog.title}`, 'info');
           } else if (payload.eventType === 'UPDATE') {
               const updatedLog = mapLogFromDB(payload.new);
-              const existingLog = logsRef.current.find(l => l.id === updatedLog.id);
-              // Notification Trigger Logic
-              const oldHistoryLen = existingLog ? existingLog.history.length : 0;
-              const newHistoryLen = updatedLog.history.length;
-              if (newHistoryLen > oldHistoryLen) {
-                  const latestHistory = updatedLog.history[newHistoryLen - 1];
-                  if (latestHistory.createdBy !== currentUser.id) {
-                        addToast(`Update on "${updatedLog.title}"`, 'info');
-                        showSystemNotification(`Update: ${updatedLog.title}`, latestHistory.content, updatedLog.id);
-                  }
-              } else if (updatedLog.status === LogStatus.CLOSED && existingLog?.status === LogStatus.ACTIVE) {
-                    addToast(`Log Closed: ${updatedLog.title}`, 'success');
-                    showSystemNotification(`Log Closed`, `"${updatedLog.title}" marked as closed.`, updatedLog.id);
-              }
               setLogs(prev => prev.map(l => l.id === updatedLog.id ? updatedLog : l));
           } else if (payload.eventType === 'DELETE') { setLogs(prev => prev.filter(l => l.id !== payload.old.id)); }
       })
@@ -485,9 +340,8 @@ const App = () => {
           if (payload.eventType === 'UPDATE') setUsers(prev => prev.map(u => u.id === payload.new.id ? mapUserFromDB(payload.new) : u));
           if (payload.eventType === 'DELETE') setUsers(prev => prev.filter(u => u.id !== payload.old.id));
       })
-      .subscribe((status) => { setIsRealtimeConnected(status === 'SUBSCRIBED'); });
+      .subscribe();
 
-    channelRef.current = channel;
     return () => { supabase.removeChannel(channel); };
   }, [currentUser]);
 
@@ -531,25 +385,11 @@ const App = () => {
       <aside className={`${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 fixed md:static inset-y-0 left-0 z-40 w-64 bg-dark-900 border-r border-dark-800 transition-transform duration-300 ease-in-out flex flex-col no-print`}>
         <div className="p-6 border-b border-dark-800 flex items-center gap-3">
           <div className="bg-brand-500 rounded p-1"><Wrench className="text-white w-5 h-5" /></div><span className="font-bold text-lg tracking-tight">PolyMaintenance</span>
-          <div className={`w-2 h-2 rounded-full ${isRealtimeConnected ? 'bg-emerald-500 shadow-emerald-500/50' : 'bg-red-500 shadow-red-500/50'} shadow-[0_0_8px] ml-auto`} title={isRealtimeConnected ? "Connected to Live Updates" : "Disconnected"}></div>
         </div>
         <nav className="flex-1 p-4 space-y-2">
           <button onClick={() => { setView('dashboard'); setIsSidebarOpen(false); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${view === 'dashboard' ? 'bg-brand-500/10 text-brand-500 border border-brand-500/20' : 'text-zinc-400 hover:bg-dark-800 hover:text-white'}`}><LayoutDashboard size={20} /> Dashboard</button>
           {currentUser.role === Role.ADMIN && (<button onClick={() => { setView('users'); setIsSidebarOpen(false); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${view === 'users' ? 'bg-brand-500/10 text-brand-500 border border-brand-500/20' : 'text-zinc-400 hover:bg-dark-800 hover:text-white'}`}><Users size={20} /> User Management</button>)}
            <button onClick={() => { setIsChangePasswordOpen(true); setIsSidebarOpen(false); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors text-zinc-400 hover:bg-dark-800 hover:text-white`}><Lock size={20} /> Change Password</button>
-
-          <div className="mt-4 pt-4 border-t border-dark-800">
-              <p className="px-4 text-xs font-semibold text-zinc-500 uppercase mb-2">Notifications</p>
-              {notificationPermission !== 'granted' ? (
-                <button onClick={requestNotificationPermission} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors text-zinc-400 hover:bg-dark-800 hover:text-white`}><BellRing size={20} /> Enable Notifications</button>
-              ) : (
-                <>
-                <div className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-emerald-500 bg-emerald-500/10 border border-emerald-500/20"><Wifi size={20} /> Active</div>
-                 <button onClick={handleTestNotification} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors text-zinc-400 hover:bg-dark-800 hover:text-white mt-1`}><Siren size={20} /> Test Notification</button>
-                 <button onClick={handleSimulateRemoteEvent} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors text-zinc-400 hover:bg-dark-800 hover:text-white mt-1`}><Zap size={20} /> Simulate Update</button>
-                </>
-              )}
-          </div>
         </nav>
         <div className="p-4 border-t border-dark-800">
           <div className="flex items-center gap-3 px-4 py-3 mb-2"><div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${currentUser.role === Role.ADMIN ? 'bg-purple-600' : currentUser.role === Role.ENGINEERING ? 'bg-cyan-600' : 'bg-emerald-600'}`}>{currentUser.fullName.charAt(0)}</div><div className="overflow-hidden"><p className="text-sm font-medium truncate">{currentUser.fullName}</p><p className="text-xs text-zinc-500 truncate capitalize">{currentUser.role.toLowerCase()}</p></div></div>
@@ -561,7 +401,9 @@ const App = () => {
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden relative no-print">
         <header className="md:hidden flex items-center justify-between p-4 border-b border-dark-800 bg-dark-900"><div className="flex items-center gap-2"><button onClick={() => setIsSidebarOpen(true)} className="text-zinc-400"><Menu size={24} /></button><span className="font-bold">PolyMaintenance</span></div></header>
 
-        {view === 'dashboard' ? (
+        {loading ? (
+           <div className="flex-1 flex items-center justify-center"><Loader2 className="animate-spin text-brand-500" size={48} /></div>
+        ) : view === 'dashboard' ? (
           <div className="flex-1 overflow-y-auto custom-scrollbar p-2 md:p-8">
             <div className="max-w-7xl mx-auto">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4 md:mb-8">
@@ -589,14 +431,12 @@ const App = () => {
                 </div>
               </div>
 
-              {loading ? ( <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2 md:gap-4 pb-20">{[1,2,3,4,5,6].map(i => <SkeletonLogCard key={i} />)}</div> ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2 md:gap-4 pb-20">
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2 md:gap-4 pb-20">
                   {filteredLogs.map(log => {
                     const status = getLogNotificationStatus(log);
                     return (
                     <div key={log.id} onClick={() => handleOpenLogCard(log)} className={`bg-dark-900 border rounded-lg md:rounded-xl p-0 transition-all cursor-pointer group overflow-hidden flex flex-row md:flex-col min-h-[6rem] md:h-full relative items-stretch ${isSelectionMode && selectedLogIds.has(log.id) ? 'border-brand-500 ring-1 ring-brand-500 bg-brand-500/5' : 'border-dark-800 hover:border-brand-500/50'}`}>
                       {status === 'new' && !isSelectionMode && (<div className="absolute top-0 right-0 z-10 p-2"><div className="flex items-center gap-1 bg-red-600 text-white text-[10px] font-bold px-2 py-0.5 rounded shadow-lg animate-pulse">NEW</div></div>)}
-                       {status === 'updated' && !isSelectionMode && (<div className="absolute top-0 right-0 z-10 p-2"><div className="flex items-center gap-1 bg-blue-600 text-white text-[10px] font-bold px-2 py-0.5 rounded shadow-lg animate-pulse">UPDATED</div></div>)}
                       {isSelectionMode && (<div className="absolute top-2 right-2 z-10"><div className={`w-6 h-6 rounded-md flex items-center justify-center transition-colors ${selectedLogIds.has(log.id) ? 'bg-brand-500 text-white' : 'bg-dark-800 border border-zinc-600 text-transparent'}`}><CheckSquare size={16} /></div></div>)}
                       <div className="w-20 md:w-full h-auto md:h-40 shrink-0 overflow-hidden relative border-r md:border-r-0 md:border-b border-dark-800 bg-dark-900/50 flex items-center justify-center">
                         {log.imageUrl ? (<><img src={log.imageUrl} alt={log.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" /><div className="hidden md:block absolute inset-0 bg-gradient-to-t from-dark-900 to-transparent opacity-80"></div></>) : (<div className="flex flex-col items-center justify-center text-zinc-600 gap-1 p-1 text-center"><ImageOff size={20} /><span className="text-[8px] font-bold uppercase leading-tight">No Attachment</span></div>)}
@@ -611,8 +451,8 @@ const App = () => {
                       </div>
                     </div>
                   );})}
-                </div>
-              )}
+              </div>
+
               {!loading && filteredLogs.length === 0 && (<div className="flex flex-col items-center justify-center py-20 text-zinc-600"><div className="bg-dark-900 p-4 rounded-full mb-4"><ClipboardList size={40} className="opacity-20" /></div><p>No logs found in this category.</p></div>)}
             </div>
             {isSelectionMode && selectedLogIds.size > 0 && (<div className="fixed bottom-6 left-1/2 -translate-x-1/2 md:left-auto md:right-8 md:translate-x-0 z-50 animate-in fade-in slide-in-from-bottom-4"><button onClick={handleBulkDelete} disabled={isActionLoading} className="bg-red-600 hover:bg-red-700 text-white px-6 py-3 rounded-full font-bold shadow-2xl flex items-center gap-2">{isActionLoading ? <Loader2 className="animate-spin" /> : <Trash2 size={20} />} Delete Selected ({selectedLogIds.size})</button></div>)}
