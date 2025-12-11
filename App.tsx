@@ -36,7 +36,8 @@ import {
   ArrowUpDown,
   MessageCircle,
   MessageSquare,
-  Siren
+  Siren,
+  Zap
 } from 'lucide-react';
 import { Role, LogType, LogStatus, Priority, User, MaintenanceLog, HistoryItem } from './types';
 import { MOCK_USERS, PRIORITY_COLORS, ROLE_BADGES } from './constants';
@@ -219,6 +220,11 @@ create table if not exists user_log_views (
   last_viewed_at timestamptz not null,
   primary key (user_id, log_id)
 );
+
+-- Enable Replication for Realtime
+alter publication supabase_realtime add table logs;
+alter publication supabase_realtime add table users;
+alter publication supabase_realtime add table user_log_views;
 `;
 
   const handleCopy = () => {
@@ -904,6 +910,10 @@ const App = () => {
   const [loading, setLoading] = useState(true);
   const [dbConnectionError, setDbConnectionError] = useState<any>(null);
   
+  // Ref to hold logs for comparison in realtime callback without re-triggering subscription
+  const logsRef = useRef<MaintenanceLog[]>([]);
+  useEffect(() => { logsRef.current = logs; }, [logs]);
+
   // Notification Toast State
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default');
@@ -1159,6 +1169,30 @@ const App = () => {
       }
   };
 
+  const handleSimulateRemoteEvent = async () => {
+     if (Notification.permission !== 'granted') {
+        alert("Enable notifications first.");
+        return;
+     }
+     
+     // Simulate an incoming broadcast from a 'fake' user
+     if (channelRef.current) {
+         channelRef.current.send({
+              type: 'broadcast',
+              event: 'app_notification',
+              payload: { 
+                  message: "Simulated: New Priority Log added by Remote User", 
+                  userId: 'fake_remote_user', 
+                  type: 'info', 
+                  logId: null 
+              }
+          });
+          addToast("Simulated broadcast sent!", "success");
+     } else {
+         alert("Realtime channel not connected yet.");
+     }
+  };
+
   const showSystemNotification = async (title: string, body: string, logId: string | null = null) => {
       if (Notification.permission === 'granted') {
           playNotificationSound();
@@ -1183,22 +1217,22 @@ const App = () => {
           }
 
           try {
-              // Priority 1: Service Worker (Best for background/android)
-              if ('serviceWorker' in navigator && !isIOS) {
+              // Priority 1: Service Worker (Best for background/android & modern iOS PWA)
+              // Note: iOS Service Worker notifications require the app to be 'installed' (Add to Home Screen)
+              if ('serviceWorker' in navigator) {
                   const registration = await navigator.serviceWorker.ready;
                   await registration.showNotification(title, options);
               } else {
-                  // Priority 2: Standard Notification API (Best for iOS/Foreground)
+                  // Priority 2: Standard Notification API (Legacy Fallback)
                   new Notification(title, options);
               }
           } catch (e) {
               console.error("System notification failed", e);
-              // Fallback attempt
+              // Fallback attempt to main thread API if SW fails
               try {
                    new Notification(title, options);
               } catch (e2) {
                    console.error("Fallback failed", e2);
-                   // alert("Debug: Notification failed. Ensure app is added to Home Screen (iOS).");
               }
           }
       }
@@ -1316,6 +1350,30 @@ const App = () => {
               }
           } else if (payload.eventType === 'UPDATE') {
               const updatedLog = mapLogFromDB(payload.new);
+
+              // NOTIFICATION LOGIC FOR UPDATES (Changes, History, Status)
+              // Compare with existing state
+              const existingLog = logsRef.current.find(l => l.id === updatedLog.id);
+              if (existingLog) {
+                  // Check 1: New History Item?
+                  if (updatedLog.history.length > existingLog.history.length) {
+                      const latestHistory = updatedLog.history[updatedLog.history.length - 1];
+                      // Only notify if someone ELSE added the history
+                      if (latestHistory.createdBy !== currentUser.id) {
+                           addToast(`Update on "${updatedLog.title}"`, 'info');
+                           showSystemNotification(`Update: ${updatedLog.title}`, latestHistory.content, updatedLog.id);
+                      }
+                  }
+                  // Check 2: Status Change?
+                  else if (updatedLog.status !== existingLog.status) {
+                       // Only notify if closed (or reopened)
+                       if (updatedLog.status === LogStatus.CLOSED) {
+                            addToast(`Log Closed: ${updatedLog.title}`, 'success');
+                            showSystemNotification(`Log Closed`, `"${updatedLog.title}" has been marked as closed.`, updatedLog.id);
+                       }
+                  }
+              }
+
               setLogs(prev => prev.map(l => l.id === updatedLog.id ? updatedLog : l));
           } else if (payload.eventType === 'DELETE') {
               setLogs(prev => prev.filter(l => l.id !== payload.old.id));
@@ -1434,8 +1492,8 @@ const App = () => {
       // Form reset handled by child component effect
       addToast('Log created successfully', 'success');
       
-      // Notify others
-      sendBroadcast(`New Log: ${newLog.title} by ${currentUser.fullName}`, 'info', newLog.id);
+      // We removed sendBroadcast() here to avoid duplicate notifications.
+      // The DB 'INSERT' event will handle notifying other users.
 
     } catch (error: any) {
       console.error("Error creating log:", error);
@@ -1482,8 +1540,7 @@ const App = () => {
       }
       addToast('Note added', 'success');
       
-      // Notify others
-      sendBroadcast(`Update on "${currentLog.title}": ${content}`, 'info', logId);
+      // Removed sendBroadcast() -> DB 'UPDATE' event will trigger notification
 
     } catch (error: any) {
       alert("Failed to update history: " + (error.message || JSON.stringify(error)));
@@ -1529,8 +1586,7 @@ const App = () => {
       if (selectedLog) setSelectedLog(null); // Close modal on close action?
       addToast('Log closed', 'success');
       
-      // Notify others
-      sendBroadcast(`Log "${currentLog.title}" marked as CLOSED by ${currentUser.fullName}`, 'success', logId);
+      // Removed sendBroadcast() -> DB 'UPDATE' event will trigger notification
 
     } catch (error: any) {
       alert("Failed to close log: " + (error.message || JSON.stringify(error)));
@@ -1799,6 +1855,15 @@ const App = () => {
                 >
                   <Siren size={20} /> Test Notification
                 </button>
+                <button 
+                  onClick={handleSimulateRemoteEvent}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors text-zinc-400 hover:bg-dark-800 hover:text-white mt-1`}
+                >
+                  <Zap size={20} /> Simulate Remote Update
+                </button>
+                <p className="px-1 text-[10px] text-zinc-600 mt-2 leading-tight">
+                    Note: You won't receive notifications for your own actions. Use 'Simulate' to test.
+                </p>
                 </>
               )}
           </div>
