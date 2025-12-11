@@ -1162,30 +1162,44 @@ const App = () => {
   const showSystemNotification = async (title: string, body: string, logId: string | null = null) => {
       if (Notification.permission === 'granted') {
           playNotificationSound();
+          
+          // IOS Check
+          const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
+
+          const options: NotificationOptions = {
+            body: body,
+            icon: "https://aistudiocdn.com/lucide-react/wrench.png",
+            tag: logId || 'general',
+            data: {
+                logId: logId,
+                url: window.location.origin
+            }
+          };
+
+          // iOS PWA (as of iOS 16.4) supports basic Notification properties but not actions/badge/vibrate in the same way.
+          if (!isIOS) {
+             (options as any).badge = "https://aistudiocdn.com/lucide-react/wrench.png";
+             (options as any).vibrate = [200, 100, 200];
+          }
+
           try {
-              // Try to use Service Worker for notification (Better mobile support)
-              if ('serviceWorker' in navigator) {
+              // Priority 1: Service Worker (Best for background/android)
+              if ('serviceWorker' in navigator && !isIOS) {
                   const registration = await navigator.serviceWorker.ready;
-                  // Use simple options for maximum compatibility
-                  registration.showNotification(title, {
-                      body: body,
-                      icon: "https://aistudiocdn.com/lucide-react/wrench.png",
-                      badge: "https://aistudiocdn.com/lucide-react/wrench.png", // Small icon for android status bar
-                      tag: logId || 'general', // Prevent duplicate notifications stacking
-                      data: {
-                          logId: logId,
-                          url: window.location.origin
-                      }
-                  } as any);
+                  await registration.showNotification(title, options);
               } else {
-                  // Fallback
-                  new Notification(title, {
-                      body: body,
-                      icon: "https://aistudiocdn.com/lucide-react/wrench.png"
-                  });
+                  // Priority 2: Standard Notification API (Best for iOS/Foreground)
+                  new Notification(title, options);
               }
           } catch (e) {
               console.error("System notification failed", e);
+              // Fallback attempt
+              try {
+                   new Notification(title, options);
+              } catch (e2) {
+                   console.error("Fallback failed", e2);
+                   // alert("Debug: Notification failed. Ensure app is added to Home Screen (iOS).");
+              }
           }
       }
   };
